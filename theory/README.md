@@ -1,4 +1,4 @@
-# Introduction for Non-Experts**
+# Introduction for Non-Experts
 
 ## 1. Why move objects using magnetic fields?
 
