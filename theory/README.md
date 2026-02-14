@@ -1,63 +1,79 @@
-# Introduction for Non-Experts**
+# Artificial Mechanical Spacetimes — High‑Level Overview
 
-## 1. Why move objects using magnetic fields?
+This subfolder contains the theoretical foundations for **artificial mechanical spacetimes** created by magnetic field shaping using an array of programmable coils.
 
-This project creates a **programmable landscape of forces** on a flat surface.  
-A small ball containing a magnetic particle rolls on that surface. Below the surface is a grid of coils—like an LED display, but producing magnetic fields instead of light. By changing the electrical current in each coil, you can change the magnetic field above it.
+The ball manipulated in this environment contains a small magnetic dipole.  
+The external environment (the coil array) generates a **multi‑frequency magnetic field** that induces:
 
-Because magnetic fields exert forces on the magnetic ball, the ball can be moved **without touching it**.
+- a **potential field** \(K(q)\) through static (DC) magnetic gradients,
+- a **gyroscopic connection** \(N_{\mathrm{eff}}(q)\) through rotating (AC) fields and dipole phase lag,
+- a **position‑dependent effective inertia** \(M_{\mathrm{eff}}(q)\) through high‑frequency amplitude modulation (vibrational averaging).
 
-No motors.  
-No sensors.  
-No electronics inside the ball.  
-The environment does all the work.
+Together, these terms yield effective second‑order mechanical dynamics:
 
-***
+\[
+M_{\mathrm{eff}}(q)\ddot q
++
+N_{\mathrm{eff}}(q)\dot q
++
+\nabla K(q) = 0.
+\]
+
+This produces a **geometrically engineered mechanical spacetime** for the ball.
+
+---
+
+# Introduction for Non‑Experts
+
+## 1. What the hardware looks like
+Imagine a flat board with a grid of electromagnets underneath.  
+On top of the board sits a small magnetic ball (e.g., a steel sphere or a sphere containing a permanent magnet).
+
+By adjusting the currents in the electromagnets, one can **shape a magnetic field** over the surface.  
+This magnetic field creates forces that move the ball **without touching it**.
+
+---
 
 ## 2. Why call this an “artificial mechanical spacetime”?
 
-A rolling ball normally obeys Newton’s law:
+Normally, a rolling ball obeys Newton’s law:
 
-$$
-m\ddot q = F.
-$$
+\[
+m \ddot{q} = F(q, \dot{q}).
+\]
 
-But by shaping the magnetic environment, we can change:
+But if we shape the magnetic field carefully, the ball behaves *as if*:
 
-*   the **potential landscape** (like hills and valleys the ball rolls on),
-*   the **curvature of paths** (like adding built‑in sideways drift),
-*   the **effective inertia** (making the ball feel “heavier” in some directions).
+- the landscape has invisible hills and valleys (potential \(K(q)\)),
+- the space has built‑in sideways drift (gyroscopic term \(N_{\mathrm{eff}}(q)\)),
+- the ball becomes “heavier” in some directions than others (effective inertia \(M_{\mathrm{eff}}(q)\)).
 
-These effects resemble how real mechanical systems behave in curved spaces or under gyroscopic forces. In robotics and physics, this is called shaping an **artificial spacetime**.
+These are all classical mechanical effects, but here they are **created artificially** by the magnetic environment.
 
-***
+This is why the system is called an *artificial mechanical spacetime*.
 
-## 3. What are $$K(q)$$, $$N_{\mathrm{eff}}(q)$$, and $$M_{\mathrm{eff}}(q)$$?
+---
 
-*   **$$K(q)$$**  
-    A magnetic potential energy landscape created by static (DC) coil currents.  
-    This determines *where* the ball wants to go.
+## 3. Why is this useful?
 
-*   **$$N_{\mathrm{eff}}(q)$$**  
-    A gyroscopic-like effect created by rotating (AC) magnetic fields.  
-    This determines *how the ball curves or swirls* as it moves.
+- The ball has **no electronics** or motors.
+- The environment acts as the **controller**.
+- Multiple balls can be manipulated **simultaneously**.
+- The global field is robust and passive — no high‑bandwidth feedback is needed.
 
-*   **$$M_{\mathrm{eff}}(q)$$**  
-    An effective mass matrix created by very fast oscillatory fields.  
-    This determines *how the ball accelerates in different directions*.
+---
 
-By changing the patterns and timing of the coil currents, we can shape all three.
+## 4. What is in this folder?
 
-***
+### `theory.md`
+A fully rigorous, mathematically complete derivation of:
 
-## 4. Why is this interesting?
+- the multi‑frequency electromagnetic field model,
+- the static potential \(K_{\mathrm{eff}}\),
+- the gyroscopic connection \(N_{\mathrm{eff}}\),
+- the effective inertia correction \(M_{\mathrm{eff}}\),
+- all assumptions and cross‑coupling conditions,
+- and implementation implications.
 
-Because:
-
-*   the ball has **no intelligence**,
-*   the environment does all the shaping,
-*   the motion emerges from **physics**, not computation.
-
-This lets you manipulate **many balls at once**, with guaranteed passivity and robustness, without needing tracking or feedback.
-
-***
+### `references.md`
+Structured scientific citations.
