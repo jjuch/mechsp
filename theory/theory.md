@@ -6,7 +6,7 @@
 1. [Magnetic Field Generation from a Coil Array](#magnetic-field)
 2. [Multi‑Frequency Coil Current Model](#multi-fequency-current)
 3. [Magnetic Dipole Force on the Ball](#force-on-ball)
-4. [Conservative Potential $`K_{\mathrm{eff}}`$](#potential-k)
+4. [Conservative Potential $`K_{\mathrm{eff}}(q)`$.](#potential-k)
 5. [Gyroscopic Term $`N_{\mathrm{eff}}(q)`$ from Rotating Fields](#gyroscopic)
 6. [Effective Inertia $`M_{\mathrm{eff}}(q)`$ from High‑Frequency Modulation](#effective-inertia)
 7. [Cross‑Coupling Consistency Checks](#cross-coupling)
@@ -23,9 +23,11 @@
 # 1. Magnetic Field Generation from a Coil Array <a name="magnetic-field"></a>
 
 We model each coil as a magnetic dipole  
+
 $$
 \mathbf{m}_i = I_i A \hat{\mathbf{z}},
 $$
+
 producing the field (standard magnetostatics) [[1],](https://pleclair.ua.edu/ph126/Misc/Notes/mag_dipoles.pdf)[[2]](https://openlearninglibrary.mit.edu/courses/course-v1:MITx+8.02.2x+2T2018/pdfbook/0/#viewer-frame):
 
 $$
@@ -38,6 +40,7 @@ With the ball located at $`z=0`$ and coils at depth $`-h`$, we care mainly about
 the vertical component $`B_z(x,y)`$.
 
 Superposition gives:
+
 $$
 B_z(x,y,t)=\sum_{i=1}^N I_i(t)b_{i,z}(x,y).
 $$
@@ -59,6 +62,7 @@ with:
 - **High‑frequency term** at $`\Omega\gg\omega`$ → effective inertia $`M_{\mathrm{eff}}(q)`$.
 
 Assumption of **frequency separation**:
+
 $$
 \Omega \gg \omega \gg 0.
 $$
@@ -68,15 +72,19 @@ $$
 # 3. Magnetic Dipole Force on the Ball <a name="force-on-ball"></a>
 
 A dipole $`\mathbf{m}_b=m_b\hat{\mathbf{z}}`$ in field $`\mathbf{B}`$ has potential  
+
 $$
 U=-\mathbf{m}_b\cdot \mathbf{B},
 $$
+
 and force [[3]](http://hyperphysics.phy-astr.gsu.edu/hbase/magnetic/magpot.html)
+
 $$
 \mathbf{F}(q,t)=m_b\nabla B_z(q,t).
 $$
 
 Thus:
+
 $$
 \mathbf{F}(q,t) = m_b \sum_{i=1}^N I_i(t)\nabla b_{i,z}(q).
 $$
@@ -94,12 +102,14 @@ B_z^{(0)}(q) = \sum_{i} I_i^{(0)} b_{i,z}(q).
 $$
 
 Magnetic potential energy:
+
 $$
 K_{\mathrm{eff}}(q)
 = - m_b B_z^{(0)}(q).
 $$
 
 Force:
+
 $$
 F_{\text{cons}} = -\nabla K_{\mathrm{eff}}(q).
 $$
@@ -131,6 +141,7 @@ $$
 $$
 
 Steady-state lag:
+
 $$
 \delta(q)=\arcsin(\omega/\kappa).
 $$
@@ -145,11 +156,7 @@ $$
 
 $$
 F(q)
-= m_b\Big[
-\cos\delta\,\nabla B_0(q)
-+
-B_0(q)\sin\delta\,\nabla\phi(q)
-\Big].
+= m_b\Big[\cos\delta\,\nabla B_0(q) + B_0(q)\sin\delta\,\nabla\phi(q) \Big].
 $$
 
 Define perpendicular gradient:
@@ -157,7 +164,7 @@ Define perpendicular gradient:
 $$
 \nabla^\perp\phi(q)=
 \begin{bmatrix}
--\partial_y\phi\$$3pt]
+-\partial_y\phi, 
 \partial_x\phi
 \end{bmatrix}.
 $$
@@ -177,7 +184,8 @@ $$
 \boxed{N_{\mathrm{eff}}(q) =
 m_b B_0(q)\sin\delta
 \left(\|\nabla\phi(q)\|\right)
-\begin{bmatrix}0 & -1\\ 1 & 0\end{bmatrix}.
+\begin{bmatrix}0 & -1\\ 
+1 & 0\end{bmatrix}.
 }
 $$
 
@@ -198,16 +206,15 @@ $$
 Force:
 
 $$
-F(q,t) =
-m_b \nabla B_0(q)
-+
-\varepsilon m_b \nabla B_1(q)\cos(\Omega t).
+F(q,t) = m_b \nabla B_0(q) + \varepsilon m_b \nabla B_1(q)\cos(\Omega t).
 $$
 
 Decompose motion:
+
 $$
 q(t)=Q(t)+\xi(t),
 $$
+
 where $`\xi`$ is small, fast oscillation.
 
 ### Solve fast oscillation
@@ -367,11 +374,13 @@ $$
 where $`f_1`$ and $`f_2`$ encode the $`\omega`$-frequency and $`\Omega`$-frequency contributions.
 
 We now rigorously analyze whether cross terms of the form  
+
 $$
 \text{(HF)} \times \text{(rot)},\qquad
 \text{(DC)} \times \text{(HF)},\qquad
 \text{(DC)} \times \text{(rot)}
 $$  
+
 produce new effective geometric effects.
 
 ---
@@ -433,6 +442,7 @@ Thus the DC field $`B_0`$ and rotating field $`B_{\mathrm{rot}}`$ produce **no m
 Higher-order interactions scale as $`O(\varepsilon_1^2)`$ and contribute solely through the **dipole phase-lag mechanism**, which we already include in $`N_{\mathrm{eff}}`$ (rotational connection induced by phase-lag torque; cf. rotating dipole relaxation models in [[4]](https://ieeexplore.ieee.org/document/10854614)).
 
 Conclusion:
+
 $$
 \boxed{\text{DC–rot interactions only contribute to the gyroscopic term }N_{\mathrm{eff}}.}
 $$
@@ -464,6 +474,7 @@ $$
 as proved formally in the vibrational control literature [[5]](https://doi.org/10.1137/S0363012999364176)
 
 Conclusion:
+
 $$
 \boxed{\text{DC–HF coupling contributes-only to }M_{\mathrm{eff}}.}
 $$
