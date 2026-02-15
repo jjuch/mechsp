@@ -279,7 +279,7 @@ M_{\mathrm{eff}}(Q) =
 m_b + \frac{\varepsilon^2}{2\Omega^2}\frac{\partial^2 B_1}{\partial x^2}
 &
 \frac{\varepsilon^2}{2\Omega^2}\frac{\partial^2 B_1}{\partial x\partial y}
-\[6pt]
+\\
 \frac{\varepsilon^2}{2\Omega^2}\frac{\partial^2 B_1}{\partial x\partial y}
 &
 m_b + \frac{\varepsilon^2}{2\Omega^2}\frac{\partial^2 B_1}{\partial y^2}
