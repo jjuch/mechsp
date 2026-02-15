@@ -241,10 +241,10 @@ $$
 m_b\ddot Q =
 m_b\nabla B_0(Q) - \frac{\varepsilon^2}{2\Omega^2}
 D^2B_1(Q)\nabla B_1(Q)
-+O(\varepsilon^2/\Omega^3).
++O(\varepsilon^2/\Omega^3),
 $$
 
-Move correction to left-hand side:
+with $D^2$ denoting the Hessian. Move correction to left-hand side:
 
 $$
 \big[m_b I_{2\times 2} + G(Q)\big]\ddot Q =
