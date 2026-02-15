@@ -156,7 +156,7 @@ $$
 
 $$
 F(q)
-= m_b\Big[\cos\delta\,\nabla B_0(q) + B_0(q)\sin\delta\,\nabla\phi(q) \Big].
+= m_b\Big[\cos\delta \nabla B_0(q) + B_0(q)\sin\delta \nabla\phi(q) \Big].
 $$
 
 Define perpendicular gradient:
@@ -174,7 +174,7 @@ Thus the **skew-symmetric transverse force** is:
 $$
 \boxed{
 F_{\text{gyro}}(q)
-= m_b B_0(q)\sin\delta\,\nabla^\perp\phi(q)
+= m_b B_0(q)\sin\delta \nabla^\perp\phi(q)
 }
 $$
 
@@ -256,7 +256,7 @@ with:
 $$
 \boxed{
 G(Q) =
-\frac{\varepsilon^2}{2\Omega^2}\,D^2B_1(Q).
+\frac{\varepsilon^2}{2\Omega^2} D^2B_1(Q).
 }
 $$
 
@@ -267,7 +267,7 @@ $$
 M_{\mathrm{eff}}(q) =
 m_b I_{2\times 2}
 +
-\frac{\varepsilon^2}{2\Omega^2}\,D^2 B_1(q).
+\frac{\varepsilon^2}{2\Omega^2} D^2 B_1(q).
 }
 $$
 
@@ -321,14 +321,14 @@ $$
 Hence the total vertical field is:
 
 $$
-B_z(q,t) = \sum_{i=1}^N I_i(t)\, b_{i,z}(q).
+B_z(q,t) = \sum_{i=1}^N I_i(t)  b_{i,z}(q).
 $$
 
 We decompose this field into **DC**, **slow AC**, and **rapid AC** components:
 
 $$
 B_z(q,t) =
-B_0(q) + \varepsilon_1\,B_{\mathrm{rot}}(q,t) + \varepsilon_2\,B_{\mathrm{HF}}(q,t),
+B_0(q) + \varepsilon_1 B_{\mathrm{rot}}(q,t) + \varepsilon_2 B_{\mathrm{HF}}(q,t),
 $$
 
 where:
@@ -362,7 +362,7 @@ Insert the multi-frequency expansion:
 
 $$
 F(q,t) =
-m_b \nabla B_0(q) + \varepsilon_1\,m_b \nabla B_{\mathrm{rot}}(q,t) + \varepsilon_2\,m_b\nabla B_{\mathrm{HF}}(q,t).
+m_b \nabla B_0(q) + \varepsilon_1 m_b \nabla B_{\mathrm{rot}}(q,t) + \varepsilon_2 m_b\nabla B_{\mathrm{HF}}(q,t).
 $$
 
 Thus the mechanical dynamics are:
@@ -408,7 +408,7 @@ $$
 Following the affine‑connection averaging results of Bullo (Theorem 4.3 in [[5]](https://doi.org/10.1137/S0363012999364176)), the averaged slow dynamics take the form:
 
 $$
-M_{\mathrm{eff}}(q)\,\ddot q + C_{\mathrm{eff}}(q,\dot q) + \nabla K_{\mathrm{eff}}(q)
+M_{\mathrm{eff}}(q) \ddot q + C_{\mathrm{eff}}(q,\dot q) + \nabla K_{\mathrm{eff}}(q)
 = 0,
 $$
 
@@ -431,7 +431,7 @@ Averaging over one period $`2\pi/\omega`$:
 
 $$
 \frac{\omega}{2\pi}\int_0^{2\pi/\omega}
-\nabla B_{\mathrm{rot}}(q,\omega t + \phi(q))\,dt
+\nabla B_{\mathrm{rot}}(q,\omega t + \phi(q)) dt
 =0,
 $$
 
@@ -460,7 +460,7 @@ $$
 is again **zero-mean**, so:
 
 $$
-\int_0^{2\pi/\Omega}\nabla B_1(q)\cos(\Omega t)\,dt=0.
+\int_0^{2\pi/\Omega}\nabla B_1(q)\cos(\Omega t) dt=0.
 $$
 
 Hence, first-order averaging yields **no effective potential** from DC–HF coupling.
@@ -486,7 +486,7 @@ $$
 Consider the mixed term:
 
 $$
-\varepsilon_1\varepsilon_2\, m_b
+\varepsilon_1\varepsilon_2  m_b
 \nabla B_{\mathrm{rot}}(q,t)
 \nabla B_{\mathrm{HF}}(q,t)
 \propto
@@ -510,7 +510,7 @@ Since $`\Omega \gg \omega`$, integration over a period of $`2\pi/\Omega`$ yields
 
 $$
 \int_0^{2\pi/\Omega}
-\cos((\Omega\pm\omega)t+\phi)\,dt = 0.
+\cos((\Omega\pm\omega)t+\phi) dt = 0.
 $$
 
 Hence **all mixed rotating–HF contributions average to zero**, and no second-order averaged term arises at this order under classical two-timescale averaging conditions (cf. Bullo's general theorem for rapidly oscillating inputs in mechanical systems) [[5]](https://doi.org/10.1137/S0363012999364176).
@@ -541,7 +541,7 @@ $$
 \begin{cases}
 M_{\mathrm{eff}}(q)=m_b I_2+\frac{\varepsilon_2^2}{2\Omega^2}D^2B_1(q) & \\
 N_{\mathrm{eff}}(q) =
-m_b B_0(q)\sin\delta(q)\,\|\nabla\phi(q)\|
+m_b B_0(q)\sin\delta(q) \|\nabla\phi(q)\|
 \begin{bmatrix}
 0 & -1\\
 1 & 0
