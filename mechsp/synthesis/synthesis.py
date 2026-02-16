@@ -1,6 +1,6 @@
 # mechsp/synthesis.py
 import numpy as np
-from .magnetics import grad_Bz, dipole_Bz, grad_Bz_analytic
+from ..magnetics import grad_Bz, dipole_Bz, grad_Bz_analytic
 
 try:
     from scipy.linalg import cho_factor, cho_solve

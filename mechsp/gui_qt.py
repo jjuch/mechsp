@@ -4,7 +4,7 @@ import numpy as np
 from PySide6 import QtWidgets, QtCore
 import pyqtgraph as pg
 
-from .synthesis import (make_quadratic_desired_field,
+from .synthesis.synthesis import (make_quadratic_desired_field,
                         mix_with_circulation,
                         synthesize_currents,
                         synthesize_currents_weighted,
