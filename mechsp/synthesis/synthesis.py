@@ -1,4 +1,4 @@
-# mechsp/synthesis.py
+# mechsp/synthesis/synthesis.py
 import numpy as np
 from ..magnetics import grad_Bz, dipole_Bz, grad_Bz_analytic
 

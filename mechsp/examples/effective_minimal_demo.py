@@ -17,6 +17,7 @@ Run:
 import numpy as np
 import sys
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 try:
     from scipy.integrate import solve_ivp
@@ -24,11 +25,12 @@ try:
 except Exception:
     _HAS_SCIPY = False
 
-from mechsp.synthesis.synthesis_dc import solve_dc_currents
+from mechsp.synthesis.synthesis_dc import solve_dc_currents, solve_dc_currents_anchored
 from mechsp.synthesis.synthesis_rot import solve_rotating_phasors
 # HF left out here for minimal demo
 from mechsp.fields import FieldDesign
 from mechsp.eff_dynamics import build_eff_model
+from mechsp.magnetics import grad_Bz_analytic
 
 
 def make_coils(L=0.20, n=14, m=14, h=0.02):
@@ -51,7 +53,83 @@ def sample_domain(L, Jside=28):
     ys = np.linspace(-L/2, L/2, Jside)
     X, Y = np.meshgrid(xs, ys, indexing='xy')
     S = np.stack([X.ravel(), Y.ravel()], axis=1)
-    return S
+    return S, (X, Y)
+
+
+def compute_Vk_eff_grid(design, m_ball, q_goal, L, Jside=50):
+    """
+    Compute the potential energy field V_{k,eff}(x,y) = ∇K_eff(q) · (q - q_goal) over a Jside x Jside grid.
+
+    Returns
+    -------
+    X, Y : (Jside,Jside) grids of coordinates
+    K_p   : (Jside,Jside) scalar field
+    """
+    S, (X, Y) = sample_domain(L, Jside=Jside)
+
+    # 2) Compute ∇Bz0 for all points against all coils in one broadcasted call:
+    #    grad_Bz_analytic(S, coil_xy, h) -> (J, N, 2)
+    G_all = grad_Bz_analytic(S, design.coil_xy, design.h, scale=design.scale)   # (J,N,2)
+
+    # 3) ∇K_eff(q) = - m_b * Σ_i I0_i ∇b_i(q)
+    I0 = design.I0.reshape(1, -1, 1)            # (1,N,1) for broadcasting
+    gradK = -m_ball * np.sum(I0 * G_all, axis=1)   # (J,2)
+
+    # 4) Dot with (q - q_goal) to get scalar F_{k,eff}
+    dq = S - q_goal[None, :]             # (J,2)
+    K_p_flat = 0.5 * np.einsum('ij,ij->i', gradK, dq)  # (J,) Potential energy
+    
+    K_p = K_p_flat.reshape(Jside, Jside)
+    return X, Y, K_p
+
+def plot_potEn_eff_surface(X, Y, Vk, q_goal, title="Scalar field", q=None):
+    """
+    3-D surface of the potential energy + heatmap with optional trajectory overlay.
+    X,Y,Vk : (J,J)
+    Q     : (T,2) trajectory points in (x,y)
+    q_goal: (2,) goal point (optional)
+    """
+
+    fig = plt.figure(figsize=(11,5))
+
+    # Left: 3D surface
+    ax = fig.add_subplot(121, projection='3d')
+    ax.plot_surface(X, Y, Vk, cmap='viridis', linewidth=0, antialiased=True, alpha=0.9)
+    ax.scatter([q_goal[0]], [q_goal[1]], [float(np.nanmax(Vk))], s=70, c='k', marker='*')
+    if q is not None:
+        xi = np.searchsorted(np.sort(np.unique(X[0, :])), q[0]) - 1
+        yi = np.searchsorted(np.sort(np.unique(Y[0, :])), q[1]) - 1
+        xi = np.clip(xi, 0, X.shape[1] - 1)
+        yi = np.clip(yi, 0, Y.shape[0] - 1)
+        Vkq = Vk[yi, xi]
+        ax.plot(q[0], q[1], Vkq, 'r-', lw=2.0, label='trajectory')
+    ax.set_title(title)
+    ax.set_xlabel('x [m]')
+    ax.set_ylabel('y [m]')
+    ax.set_zlabel('V_{k,eff}')
+    ax.legend()
+
+    # Right: heatmap
+    ax2 = fig.add_subplot(122)
+    im = ax2.imshow(Vk, origin='lower',
+                    extent=[X.min(), X.max(), Y.min(), Y.max()],
+                    cmap='viridis', aspect='equal')
+    ax2.plot([q_goal[0]], [q_goal[1]], 'k*', ms=10)
+    if q is not None:
+        ax2.plot(q[0], q[1], 'r-', lw=2.0)
+        ax2.plot(q[0][0], q[1][0], 'ro', ms=5, label='start')
+        ax2.plot(q[0][-1], q[1][-1], 'r*', ms=8, label='end')
+    ax2.set_title('Heatmap of F_{k,eff}')
+    ax2.set_xlabel('x [m]')
+    ax2.set_ylabel('y [m]')
+    ax2.legend()
+    cb = fig.colorbar(im, ax=ax2)
+    cb.set_label('V_{k,eff}')
+
+    plt.tight_layout()
+    plt.show()
+
+
 
 
 def main():
@@ -61,13 +139,34 @@ def main():
     q_goal = np.array([0.06, -0.03])
     q0 = np.array([-0.07, 0.07])
     v0 = np.zeros(2)
+    Jside = 100 # 30 by 30 grid
 
     # --- DC synthesis for K_eff ---
-    S = sample_domain(L, Jside=30)
-    k = 10
+    S, (X, Y) = sample_domain(L, Jside=Jside)
+
+    # Desired linear field
+    k = 20.0
     F_des = -k * (S - q_goal[None, :])  # linear "spring" toward goal
-    I0, diag_dc = solve_dc_currents(S, F_des, coil_xy, h, lam=1e-4)
-    print(f"[DC] rel_fit={diag_dc['rel_fit_err']:.3e}, cond≈{diag_dc['cond']:.2e}")
+    q_minus_g = S - q_goal[None, :]             # (J,2)
+    Vdes_flat = np.einsum('ij,ij->i', k*np.ones(q_minus_g.shape), q_minus_g**2)  # (J,)
+    Vdes = Vdes_flat.reshape(Jside, Jside)
+    # plot_potEn_eff_surface(X, Y, Vdes, q_goal)
+    
+    # Region weights: emphasise vicinity of q_goal
+    d = np.linalg.norm(S - q_goal[None, :], axis=1)
+    sigma = 0.05 # 5cm
+    w_region = np.exp(-(d**2) / (2*sigma**2))
+
+    # I0, diag_dc = solve_dc_currents_anchored(
+    #     sample_xy=S, F_des=F_des,
+    #     coil_xy = coil_xy, h=h, m_ball=m_ball, q_goal=q_goal, k_stiff=k, lam=1e-4, w_region=w_region, w_goalF=50, w_goalH=10.0, scale=1.0)
+    I0, diag_dc = solve_dc_currents(
+        sample_xy=S, F_des=F_des,
+        coil_xy = coil_xy, h=h, lam=1e-4, scale=1.0) 
+    print(f"[DC anchored] rel_fit={diag_dc['rel_fit_err']:.3e}, cond≈{diag_dc['cond']:.2e}")
+    # print(f"   Force at goal  ≈ {diag_dc['F_goal']}")
+    # print(f"   JF at goal     ≈\n{diag_dc['JF_goal']}")
+
 
     # --- Rotating field for swirl (N_eff) ---# 
     # Helper functions
@@ -110,15 +209,16 @@ def main():
 
     # B0 with higher-order vanish near goal, mild outside
     B0_des = B0_profile(r, L, beta=0.6, r0=r0, r1=r1, p=5)
+    B0_des = np.zeros(B0_des.shape)
 
     # VERY IMPORTANT: include q_goal itself as a sample with B0=0 and any phi (ignored by solver)
     S_plus = np.vstack([q_goal[None,:], S])
     B0_plus = np.concatenate([[0.0], B0_des])
     phi_plus = np.concatenate([[0.0], phi_des])
+    phi_plus = np.zeros(phi_plus.shape)
 
     Irot_amp, Irot_phase, diag_rot = solve_rotating_phasors(S_plus, B0_plus, phi_plus, coil_xy, h, lam=1e-3)
     print(f"[ROT] rel_fit={diag_rot['rel_fit_err']:.3e}")
-
 
     # --- HF: skip (ΔM=0) for the minimal demo ---
     Ihf_amp = np.zeros_like(I0)
@@ -147,8 +247,7 @@ def main():
 
     # choose a dipole lag rate kappa > omega, for delta=arcsin(omega/kappa)
     kappa = 5.0 * omega  # previously 2.0; now smaller sin(delta)
-    eff = build_eff_model(design, m_ball=m_ball, kappa=kappa, c_damp=0.15)
-
+    eff = build_eff_model(design, m_ball=m_ball, kappa=kappa, c_damp=0.05)
 
     # --- Simulate averaged dynamics: M_eff(q) qdd = -N_eff(q) qd - gradK(q) ---
     y0 = np.hstack([q0, v0])
@@ -158,7 +257,7 @@ def main():
         print(f"{t} / {t_final}", end='\r')
         q = y[0:2]; v = y[2:4]
         M = eff.M_eff(q)
-        rhs = - eff.N_eff(q, v) @ v - eff.gradK(q) - eff.c_damp * v
+        rhs = - eff.gradK(q) - eff.c_damp * v #- eff.N_eff(q, v) @ v
         a = np.linalg.solve(M, rhs)
         return np.array([v[0], v[1], a[0], a[1]])
 
@@ -196,6 +295,10 @@ def main():
         print(f"q={p}, ||N_eff||_F={np.linalg.norm(Ne):.3e}") # You want 0, ~0, very small, small respectively.
 
     print("Done.")
+    # Check potential energy well
+    X, Y, Vk = compute_Vk_eff_grid(design, m_ball, q_goal, L, Jside=Jside)
+    plot_potEn_eff_surface(X, Y, Vk, q_goal, q=Q)
+
     plt.figure()
     plt.subplot(121)
     plt.plot(t, Q[0, :], label='x(t)')

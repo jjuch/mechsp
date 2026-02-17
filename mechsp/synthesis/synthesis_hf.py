@@ -1,4 +1,4 @@
-# mechsp/synthesis_hf.py
+# mechsp/synthesis/synthesis_hf.py
 import numpy as np
 from typing import Dict, Tuple
 
