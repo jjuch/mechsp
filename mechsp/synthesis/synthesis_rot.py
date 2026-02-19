@@ -1,4 +1,4 @@
-# mechsp/synthesis_rot.py
+# mechsp/synthesis/synthesis_rot.py
 import numpy as np
 from typing import Dict, Tuple
 from ..magnetics import dipole_Bz  # we use scalar basis b_i(q); combine coils with complex weights

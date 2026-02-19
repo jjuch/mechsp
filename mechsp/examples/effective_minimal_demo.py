@@ -78,8 +78,7 @@ def compute_Vk_eff_grid(design, m_ball, q_goal, L, Jside=50):
     # 4) Dot with (q - q_goal) to get scalar F_{k,eff}
     dq = S - q_goal[None, :]             # (J,2)
     K_p_flat = 0.5 * np.einsum('ij,ij->i', gradK, dq)  # (J,) Potential energy
-    
-    K_p = K_p_flat.reshape(Jside, Jside)
+    K_p = K_p_flat.reshape(Jside, Jside) # Order of coordinates is y, x
     return X, Y, K_p
 
 def plot_potEn_eff_surface(X, Y, Vk, q_goal, title="Scalar field", q=None):
@@ -93,16 +92,20 @@ def plot_potEn_eff_surface(X, Y, Vk, q_goal, title="Scalar field", q=None):
     fig = plt.figure(figsize=(11,5))
 
     # Left: 3D surface
-    ax = fig.add_subplot(121, projection='3d')
+    ax = fig.add_subplot(221, projection='3d')
     ax.plot_surface(X, Y, Vk, cmap='viridis', linewidth=0, antialiased=True, alpha=0.9)
     ax.scatter([q_goal[0]], [q_goal[1]], [float(np.nanmax(Vk))], s=70, c='k', marker='*')
+
     if q is not None:
         xi = np.searchsorted(np.sort(np.unique(X[0, :])), q[0]) - 1
-        yi = np.searchsorted(np.sort(np.unique(Y[0, :])), q[1]) - 1
+        yi = np.searchsorted(np.sort(np.unique(Y[:, 0])), q[1]) - 1
         xi = np.clip(xi, 0, X.shape[1] - 1)
         yi = np.clip(yi, 0, Y.shape[0] - 1)
         Vkq = Vk[yi, xi]
         ax.plot(q[0], q[1], Vkq, 'r-', lw=2.0, label='trajectory')
+        # ax.plot(np.sort(np.unique(X[0, xi])), np.sort(np.unique(Y[0, yi])), Vkq, 'b-', lw=2.0, label='approx trajectory')
+    else:
+        Vkq = None
     ax.set_title(title)
     ax.set_xlabel('x [m]')
     ax.set_ylabel('y [m]')
@@ -110,7 +113,7 @@ def plot_potEn_eff_surface(X, Y, Vk, q_goal, title="Scalar field", q=None):
     ax.legend()
 
     # Right: heatmap
-    ax2 = fig.add_subplot(122)
+    ax2 = fig.add_subplot(222)
     im = ax2.imshow(Vk, origin='lower',
                     extent=[X.min(), X.max(), Y.min(), Y.max()],
                     cmap='viridis', aspect='equal')
@@ -126,31 +129,40 @@ def plot_potEn_eff_surface(X, Y, Vk, q_goal, title="Scalar field", q=None):
     cb = fig.colorbar(im, ax=ax2)
     cb.set_label('V_{k,eff}')
 
+    if Vkq is not None:
+        ax3 = fig.add_subplot(212)
+        t = np.linspace(0, 1, len(Vkq))
+        ax3.plot(t, Vkq)
+        ax3.set_xlabel(r't / $t_{final}$ [s]')
+        ax3.set_ylabel('V(t)')
+
     plt.tight_layout()
     plt.show()
+
+    return Vkq
 
 
 
 
 def main():
     # --- geometry & params ---
-    coil_xy, h, L = make_coils(L=0.20, n=16, m=16, h=0.02)
+    coil_xy, h, L = make_coils(L=0.20, n=25, m=25, h=0.02)
     m_ball = 0.015  # kg (example)
     q_goal = np.array([0.06, -0.03])
-    q0 = np.array([-0.07, 0.07])
+    q0 = np.array([-0.07, 0.06])
     v0 = np.zeros(2)
-    Jside = 100 # 30 by 30 grid
+    Jside = 100 # x by x grid
 
     # --- DC synthesis for K_eff ---
     S, (X, Y) = sample_domain(L, Jside=Jside)
 
     # Desired linear field
-    k = 20.0
+    k = 50.0
     F_des = -k * (S - q_goal[None, :])  # linear "spring" toward goal
     q_minus_g = S - q_goal[None, :]             # (J,2)
     Vdes_flat = np.einsum('ij,ij->i', k*np.ones(q_minus_g.shape), q_minus_g**2)  # (J,)
     Vdes = Vdes_flat.reshape(Jside, Jside)
-    # plot_potEn_eff_surface(X, Y, Vdes, q_goal)
+    plot_potEn_eff_surface(X, Y, Vdes, q_goal)
     
     # Region weights: emphasise vicinity of q_goal
     d = np.linalg.norm(S - q_goal[None, :], axis=1)
@@ -298,6 +310,7 @@ def main():
     # Check potential energy well
     X, Y, Vk = compute_Vk_eff_grid(design, m_ball, q_goal, L, Jside=Jside)
     plot_potEn_eff_surface(X, Y, Vk, q_goal, q=Q)
+
 
     plt.figure()
     plt.subplot(121)
