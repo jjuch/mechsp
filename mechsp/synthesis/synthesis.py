@@ -15,11 +15,12 @@ except Exception:
     _HAS_SCIPY_OPT = False
 
 
-def build_basis_forces(sample_xy, coil_xy, h, marble_moment=1.0, scale=1.0):
+def build_basis_forces(sample_xy: np.ndarray, 
+                       coil_xy: np.ndarray, h: float, marble_moment: float = 1.0, scale: float = 1.0) -> np.ndarray:
     """
     Assemble basis force matrix A for linear mapping I -> F(sample_xy).
     For each coil i, basis force at q is f_i(q) = marble_moment * ∇Bz_i(q).
-    Returns A shape (2J, N).
+    Returns A shape (2J, N). Rows are [Fx(q1), Fy(q1), Fx(q2), Fy(q2), ...]
     """
     J = sample_xy.shape[0]
     N = coil_xy.shape[0]
