@@ -17,15 +17,13 @@ Run:
 import numpy as np
 import sys
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-
 try:
     from scipy.integrate import solve_ivp
     _HAS_SCIPY = True
 except Exception:
     _HAS_SCIPY = False
 
-from mechsp.synthesis.synthesis_dc import solve_dc_currents, solve_dc_currents_anchored
+from mechsp.synthesis.synthesis_dc import solve_dc_currents, solve_dc_currents_anchored, solve_dc_currents_potsep
 from mechsp.synthesis.synthesis_rot import solve_rotating_phasors
 # HF left out here for minimal demo
 from mechsp.fields import FieldDesign
@@ -157,27 +155,45 @@ def main():
     S, (X, Y) = sample_domain(L, Jside=Jside)
 
     # Desired linear field
-    k = 50.0
+    k = 1.0
     F_des = -k * (S - q_goal[None, :])  # linear "spring" toward goal
     q_minus_g = S - q_goal[None, :]             # (J,2)
     Vdes_flat = np.einsum('ij,ij->i', k*np.ones(q_minus_g.shape), q_minus_g**2)  # (J,)
-    Vdes = Vdes_flat.reshape(Jside, Jside)
+    Vdes = 0.5*Vdes_flat.reshape(Jside, Jside)
     plot_potEn_eff_surface(X, Y, Vdes, q_goal)
     
     # Region weights: emphasise vicinity of q_goal
-    d = np.linalg.norm(S - q_goal[None, :], axis=1)
-    sigma = 0.05 # 5cm
-    w_region = np.exp(-(d**2) / (2*sigma**2))
+    # d = np.linalg.norm(S - q_goal[None, :], axis=1)
+    # sigma = 0.05 # 5cm
+    # w_region = np.exp(-(d**2) / (2*sigma**2))
 
     # I0, diag_dc = solve_dc_currents_anchored(
     #     sample_xy=S, F_des=F_des,
     #     coil_xy = coil_xy, h=h, m_ball=m_ball, q_goal=q_goal, k_stiff=k, lam=1e-4, w_region=w_region, w_goalF=50, w_goalH=10.0, scale=1.0)
-    I0, diag_dc = solve_dc_currents(
-        sample_xy=S, F_des=F_des,
-        coil_xy = coil_xy, h=h, lam=1e-4, scale=1.0) 
-    print(f"[DC anchored] rel_fit={diag_dc['rel_fit_err']:.3e}, cond≈{diag_dc['cond']:.2e}")
-    # print(f"   Force at goal  ≈ {diag_dc['F_goal']}")
-    # print(f"   JF at goal     ≈\n{diag_dc['JF_goal']}")
+    # I0, diag_dc = solve_dc_currents(
+    #     sample_xy=S, F_des=F_des,
+    #     coil_xy = coil_xy, h=h, lam=1e-4, scale=1.0, bounds=(-1, 1)) 
+    
+    I0_prev = I0 if 'I0' in locals() else None
+    I0, diag_dc = solve_dc_currents_potsep(
+        sample_xy=S,
+        F_des=F_des,
+        coil_xy=coil_xy,
+        h=h,
+        q_goal=q_goal,
+        mu=0.5 * k,       # start around 0.3–0.7 * k
+        m_ball=m_ball,
+        lam=1e-4,
+        Imax=1.0,
+        scale=1.0,
+        r0=0.015,         # exclude inner disk from inequalities
+        thin_factor=1,    # try 2 or 3 for huge grids
+        solver="osqp",    # "osqp" or "highs"
+        eps_abs=1e-5, eps_rel=1e-5, polish=True, time_limit=None,
+        x0=I0_prev,           # pass previous I0 here for warm-start across runs
+        verbose=True,      # Show solver diagnostics
+    )
+
 
 
     # --- Rotating field for swirl (N_eff) ---# 
@@ -259,7 +275,7 @@ def main():
 
     # choose a dipole lag rate kappa > omega, for delta=arcsin(omega/kappa)
     kappa = 5.0 * omega  # previously 2.0; now smaller sin(delta)
-    eff = build_eff_model(design, m_ball=m_ball, kappa=kappa, c_damp=0.05)
+    eff = build_eff_model(design, m_ball=m_ball, kappa=kappa, c_damp=0.07)
 
     # --- Simulate averaged dynamics: M_eff(q) qdd = -N_eff(q) qd - gradK(q) ---
     y0 = np.hstack([q0, v0])

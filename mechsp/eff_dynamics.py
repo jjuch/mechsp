@@ -80,7 +80,7 @@ def build_eff_model(design: FieldDesign, m_ball: float, kappa: float = None, c_d
         R2 = rx*rx + ry*ry + rz*rz
         Rm3 = R2**(-1.5)
         Rm5 = R2**(-2.5)
-        Bz_i = scale*( 3.0*rz*rz*Rm5 - Rm3 )     # (N,)
+        # Bz_i = scale*( 3.0*rz*rz*Rm5 - Rm3 )     # (N,)
 
         # S(q) = Σ A_i b_i(q) = a + j b
         Bz_i = dipole_Bz(q, coil_xy, h, scale=scale)            # (N,)
