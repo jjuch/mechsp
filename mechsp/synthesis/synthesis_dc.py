@@ -426,3 +426,31 @@ def summarise_dc_qp_diagnostics(
             print("cond(P)      : (not computed)")
     
     print(line)
+
+
+def approx_Hess_gradK(eff_model, q, h=None):
+    """
+    Central-difference Hessian of gradK at q (2D).
+    Returns a (2,2) array H with H[i,j] = ∂ gradK_i / ∂ q_j.
+    """
+    q = np.asarray(q, dtype=float)
+    if h is None:
+        # step ~ sqrt(machine_eps) * (1 + |q|)   (rule-of-thumb)
+        h = 1e-6 * (1.0 + np.linalg.norm(q))
+        h = max(h, 1e-7)
+
+    H = np.zeros((2, 2), dtype=float)
+    e1 = np.array([1.0, 0.0])
+    e2 = np.array([0.0, 1.0])
+
+    # column 0: ∂/∂x of gradK
+    g_plus  = eff_model.gradK(q + h*e1)
+    g_minus = eff_model.gradK(q - h*e1)
+    H[:, 0] = (g_plus - g_minus) / (2.0*h)
+
+    # column 1: ∂/∂y of gradK
+    g_plus  = eff_model.gradK(q + h*e2)
+    g_minus = eff_model.gradK(q - h*e2)
+    H[:, 1] = (g_plus - g_minus) / (2.0*h)
+
+    return H

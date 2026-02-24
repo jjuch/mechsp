@@ -23,7 +23,7 @@ try:
 except Exception:
     _HAS_SCIPY = False
 
-from mechsp.synthesis.synthesis_dc import solve_dc_currents
+from mechsp.synthesis.synthesis_dc import solve_dc_currents, approx_Hess_gradK
 from mechsp.synthesis.synthesis import build_basis_forces
 from mechsp.synthesis.synthesis_rot import solve_rotating_phasors
 from mechsp.synthesis.synthesis_hf import solve_hf_modulation
@@ -35,19 +35,20 @@ from mechsp.examples.util import (
     make_grid, compute_Vk_eff_grid, plot_scalar_map,
     compute_Meff_maps, plot_Meff_suite,
     compute_Neff_maps, plot_Neff_suite,
-    fit_scalar_field_to_coils, compute_I0_with_cache
+    fit_scalar_field_to_coils, compute_I0_with_cache, build_deltaM_target
 )
 
 # ----------------------------
 # Experiment toggles
 # ----------------------------
 USE_I0_CACHE = True       # use/load a local cache for I0 (recompute only if fit changed)
-USE_M = False             # add M_eff bump (anisotropic inertia)
-USE_N = False             # add N_eff steering arc
+USE_M = True             # add M_eff bump (anisotropic inertia)
+USE_N = True             # add N_eff steering arc
 PLOT_M_DESIRED = True     # visualize desired M bump footprint
 PLOT_N_DESIRED = True     # visualize desired N window
 PLOT_M_REALIZED = True    # maps of realized M_eff
 PLOT_N_REALIZED = True    # maps of realized N_eff
+RUN_TRUE_SIM = True # Run the ground-truth with prescribed M, N, K: without magnetic approximations
 
 
 # ----------------------------
@@ -156,78 +157,175 @@ def main():
     print(f"[DC] rel_fit={diag_dc['rel_fit_err']:.3e}  (cached={diag_dc.get('cached', False)})")
     
     
-    # --- Desired M bump via HF (anisotropic Gaussian above obstacle) ---
-    # Design a small target footprint B1(q) to produce ΔM ≻ 0 and anisotropy λx > λy
+    # --- Desired M bump via HF ---
+    # Averaging leverage: ΔM ∝ (eps^2)/(2*Omega^2). Use parameters that make the bump visible while keeping a clear scale separation.
     Ihf_amp = np.zeros_like(I0)
     Ihf_phase = np.zeros_like(I0)
-    Omega = 2*np.pi*500.0
-    eps = 0.10
+    Omega = 2*np.pi*120.0 # (>> 10 Hz slow dynamics)
+    eps = 0.70 # Sizeable HF amplitude
+    c_mass = (eps**2)/(2.0*Omega**2)
+    print(f"[HF] c_mass = eps^2 / (2 Omega^2) = {c_mass:.3e}")
 
     if USE_M:
+        # Local SPD bump above obstacle, principal axes aligned with x/y, λx > λy
         q_m = q_obs + np.array([0.0, 0.015]) # Center of bump above obstacle
-        Sig = np.diag([(0.020)**2, (0.008)**2]) # sigma_x  sigma_y => lambda_x > lambda_y
+        S_hf, DeltaM_des = build_deltaM_target(
+            q_center=q_m, peak_ratio=0.12, m_ball=m_ball,
+            sigma_x=0.020, sigma_y=0.008, anisotropy=2.5,
+            grid_halfwidth=0.03, step=0.004,
+            freeze_goal=q_goal, freeze_r=0.012,
+            avoid_center=q_obs, avoid_r_in=r_obs+0.004, avoid_r_out=r_obs+0.012
+        )
 
-        def taper_goal_points(P):
-            # zero near goal
-            d = np.linalg.norm(P - q_goal[None, :], axis=1)
-            return 1.0 - phase_taper(d, 0.010, 0.018)
-        
-        def taper_obstacle_ring(P):
-            # zero inside obstacle + small moat
-            d = np.linalg.norm(P - q_obs[None, :], axis=1)
-            return phase_taper(d, r_obs + 0.005, r_obs + 0.012)
-        
-        def B1_target(P):
-            d = P - q_m[None, :]
-            invSig = np.linalg.inv(Sig)
-            e = np.einsum('ij,jk,ik->i', d, invSig, d)
-            base = np.exp(-0.5*e)
-            return base * taper_goal_points(P) * taper_obstacle_ring(P)
-        
-        # Fit B1 over a thinned stencil
-        S_fit = S[::5]
-        b_des = B1_target(S_fit)
-        w = fit_scalar_field_to_coils(S_fit, b_des, coil_xy, h, scale=1.0, lam_ridge=1e-6)
-        Ihf_amp = w
-        Ihf_phase = np.zeros_like(w)
+        Ihf_amp, Ihf_phase, diag_hf = solve_hf_modulation(
+            sample_xy=S_hf,
+            DeltaM_des=DeltaM_des, #(J, 2, 2) SPD targets
+            coil_xy=coil_xy, h=h,
+            lam_H=1e-3, scale=1.0
+        )
+        print(f"[HF] rel_fit={diag_hf.get('rel_fit_err',np.nan):.3e}")
 
         if PLOT_M_DESIRED:
             Xd, Yd, Sd = make_grid(L, 120)
-            Bd = B1_target(Sd).reshape(120, 120)
+            
+            def trace_deltaM(P):
+                # interpolate coarse target — for visualization only
+                d = np.linalg.norm(P - q_m[None,:], axis=1)
+                g = np.exp(-0.5*((P[:,0]-q_m[0])**2/(0.020**2) + (P[:,1]-q_m[1])**2/(0.008**2)))
+                # rough trace profile (scaled)
+                return 0.12*m_ball * (1 + (2.5-1))*0.5 * g
+            Tr = trace_deltaM(Sd).reshape(120,120)
+
             plt.figure(figsize=(5,4))
-            plot_scalar_map(Xd, Yd, Bd, title="Desired B1 footprint (for ΔM)", cbar_label="B1")
+            plot_scalar_map(Xd, Yd, Tr, title="Desired ΔM footprint (trace, approx.)", cbar_label="tr(ΔM)")
             plt.scatter([q_obs[0]], [q_obs[1]], s=60, c='r', marker='x', label='obstacle')
             plt.scatter([q0[0]], [q0[1]], s=60, c='b', marker='x', label='start')
             plt.scatter([q_goal[0]], [q_goal[1]], s=60, c='k', marker='x', label='goal')
             plt.legend(); plt.tight_layout()
 
             
-    # --- Desired N arc (rot field taper) ---
+    # --- Desired N arc  ---
     # Phase/amp taper: freeze near goal; strong only on a small arc “south” of obstacle
     omega  = 2*np.pi*10.0
-    kappa  = 5.0 * omega   # small lag: sin(delta)=omega/kappa
+    kappa  = 4.0 * omega   # small lag: sin(delta)=omega/kappa; delta ≈ 14°
     Irot_amp   = np.zeros_like(I0)
     Irot_phase = np.zeros_like(I0)
 
     if USE_N:   
-        # craft desired scalar amplitudes by reusing B basis, then set phase per coil using atan2 of coil position
-        # (simple heuristic: stronger on arc region)
-        S_amp = S[::4]
-        amp_des = np.array([window_arc(p, q_obs, r_in=r_obs+0.010, r_out=r_obs+0.040) for p in S_amp])
-        W = fit_scalar_field_to_coils(S_amp, amp_des, coil_xy, h, scale=1.0, lambda_ridge=1e-5)
-        Irot_amp = 0.4 * (W / (np.max(np.abs(W)) + 1e-12)) # Scale gently
-        # A neutral phase choice (0) is acceptable since N_eff uses \grad\phi, which can be refined later (TODO)
-        Irot_phase = np.zeros_like(Irot_amp)
+        # Build amplitude only on a short arc “south” of the obstacle
+        S_rot = S[::4]
+        B0_des = np.array([window_arc(p, q_obs, r_in=r_obs+0.010, r_out=r_obs+0.040, angle_center=-np.pi/2, angle_halfwidth=np.pi/5) for p in S_rot])
+        # Phase map: freeze near goal (∇φ=0) and follow the angular coordinate elsewhere
+        d_rot = S_rot - q_goal[None, :]
+        phi_raw = np.arctan2(d_rot[:, 1], d_rot[:, 0]) # [-pi, pi]
+        r_goal = np.linalg.norm(d_rot, axis=1)
+        s_phase = phase_taper(r_goal, 0.010, 0.018)
+        phi_des = s_phase * phi_raw
+
+        Irot_amp, Irot_phase, diag_rot = solve_rotating_phasors(
+            sample_xy=S_rot,
+            B0_des=B0_des, phi_des=phi_des,
+            coil_xy=coil_xy, h=h,
+            lam=1e-3, scale=1.0
+        )
+        print(f"[ROT] rel_fit={diag_rot.get('rel_fit_err',np.nan):.3e}")
 
         if PLOT_N_DESIRED:
             Xw, Yw, Sw = make_grid(L, 120)
-            Wmap = np.array([window_arc(p, q_obs, r_in=r_obs+0.010, r_out=r_obs+0.040) for p in Sw]).reshape(120, 120)
+            Wmap = np.array([window_arc(p, q_obs, r_in=r_obs+0.010, r_out=r_obs+0.040, angle_center=-np.pi/2, angle_halfwidth=np.pi/5) for p in Sw]).reshape(120, 120)
             plt.figure(figsize=(5, 4))
             plot_scalar_map(Xw, Yw, Wmap, title="N_eff steering window (desired)", cbar_label="window")
             plt.scatter([q_obs[0]], [q_obs[1]], s=60, c='r', marker='x', label='obstacle')
             plt.scatter([q0[0]], [q0[1]], s=60, c='b', marker='x', label='start')
             plt.scatter([q_goal[0]], [q_goal[1]], s=60, c='k', marker='x', label='goal')
             plt.legend(); plt.tight_layout()
+
+    if RUN_TRUE_SIM:
+        I2 = np.eye(2)
+        # Potential energy force
+        def gradK_true(q):
+            return k * (q - q_goal)
+        
+        # Inertia force
+        q_m_true = q_obs + np.array([0.0, 0.015])
+        sigx, sigy = 0.020, 0.008
+        lam_ratio = 2.5 # λx / λy
+        peak_ratio = 0.12 # ΔM_peak ≈ peak_ratio * m_ball
+
+        def DeltaM_true(q):
+            d = q - q_m_true
+            g = np.exp(-0.5 * ((d[0]/sigx)**2 + (d[1]/sigy)**2))
+            # zero near goal & inside obstacle moat
+            s_goal  = 1.0 - phase_taper(np.linalg.norm(q - q_goal), 0.010, 0.018)
+            s_avoid = phase_taper(np.linalg.norm(q - q_obs ), r_obs+0.004, r_obs+0.012)
+            g *= s_goal * s_avoid
+            lam_y = 1.0
+            lam_x = lam_ratio * lam_y
+            return (peak_ratio * m_ball) * np.diag([lam_x, lam_y]) * g
+        
+        def M_true(q): return m_ball*I2 + DeltaM_true(q)
+
+        # Velocity forces: γ(q) J on a short arc (south)
+        def gamma_true(q):
+            rwin = phase_taper(np.linalg.norm(q - q_obs), r_obs+0.010, r_obs+0.040) * (1 - phase_taper(np.linalg.norm(q - q_obs), r_obs+0.040, r_obs+0.050))
+            # angular lobe around -pi/2
+            ang = np.arctan2((q - q_obs)[1], (q - q_obs)[0])
+            dang = np.arctan2(np.sin(ang + np.pi/2), np.cos(ang + np.pi/2))
+            awin = np.clip(1 - np.abs(dang)/(np.pi/5), 0.0, 1.0)
+            # small magnitude; tuned so bend is visible but not dominant
+            return 2.0 * rwin * awin   # [1/s], scale as needed
+
+        Jskew = np.array([[0.0, -1.0],[1.0, 0.0]])
+        def N_true(q): return gamma_true(q) * Jskew
+
+        c_damp = 0.07
+        # --- RHS (true)
+        def true_rhs(t, y):
+            q = y[0:2]; v = y[2:4]
+            M = M_true(q)
+            rhs = - gradK_true(q) - c_damp * v - N_true(q) @ v
+            a = np.linalg.solve(M, rhs)
+            return np.array([v[0], v[1], a[0], a[1]])
+
+        def true_jac_quasi(t, y):
+            q = y[0:2]; v = y[2:4]
+            # same quasi-Newton structure, with Hessian of K_true = k I
+            A_q = - np.linalg.inv(M_true(q)) @ (k * I2)  # since H_K_true = k I
+            
+            A_v =   np.linalg.inv(M_true(q)) @ (-c_damp*I2 - N_true(q))
+            J = np.zeros((4,4))
+            J[0:2, 2:4] = I2
+            J[2:4, 0:2] = A_q
+            J[2:4, 2:4] = A_v
+            return J
+
+        # integrate with the same stiff settings
+        rtol = 1e-6
+        atol = np.array([1e-8, 1e-8, 1e-6, 1e-6])
+        y0 = np.hstack([q0, v0])
+        t_final = 20.0 # simulation time
+        sol_true = solve_ivp(
+            true_rhs, (0.0, t_final), y0,
+            method="Radau", jac=true_jac_quasi,
+            rtol=rtol, atol=atol, max_step=0.01, first_step=0.002
+        )
+
+        
+        Q_true = sol_true.y[0:2, :]
+        t_true = sol_true.t
+
+        # overlay on your heatmap
+        plt.figure()
+        # plot_scalar_map(Xp, Yp, Vk, title="V_k,eff with trajectories", cbar_label="V")
+        # plt.plot(Q[0, :],      Q[1, :],      'r-', lw=2, label='eff (magnetic)')
+        plt.plot(Q_true[0, :], Q_true[1, :], 'b--', lw=2, label='true (prescribed)')
+        plt.plot([q0[0]],[q0[1]], 'ko', ms=4); plt.plot([q_goal[0]],[q_goal[1]], 'k*', ms=8)
+        plt.legend(); plt.tight_layout()
+        plt.show()
+
+
+
+
 
     # --- Build FieldDesign and effective model ---
     design = FieldDesign(
@@ -289,9 +387,49 @@ def main():
             rhs -= wN(q) *  (eff.N_eff(q, v) @ v)
         a = np.linalg.solve(M, rhs)
         return np.array([v[0], v[1], a[0], a[1]])
+    
+    def eff_jac(t, y):
+        """
+        Quasi-Newton Jacobian of f = [v; a(q,v)]:
+        ∂f/∂y = [[0, I],
+                [∂a/∂q, ∂a/∂v]]
+        We approximate:
+        ∂a/∂v ≈ M^{-1} * ( -c*I - N(q) )     # drop ∂M^{-1}/∂q term
+        ∂a/∂q ≈ M^{-1} * ( -∂(gradK)/∂q - ∂N/∂q @ v )
+        For speed/simplicity, you can start with:
+        ∂a/∂q ≈ - M^{-1} * H_K(q)            # Hessian of K_eff
+        ∂a/∂v as above without ∂N/∂q term.
+        """
+        
+        q = y[0:2]; v = y[2:4]
+        I2 = np.eye(2)
+
+        M  = eff.M_eff(q) if USE_M else m_ball*I2
+        Minv = np.linalg.inv(M)
+
+        HK = approx_Hess_gradK(q)  # tiny central FD Hessian of gradK
+
+        #  N term at q (skew); ∂N/∂q is small for gentle tapers -> ignore initially
+        Nq = eff.N_eff(q, v) if USE_N else np.zeros((2,2))
+
+        A_q = - Minv @ HK                   # (2,2)
+        A_v =   Minv @ (-eff.c_damp*np.eye(2) - Nq)
+
+        J = np.zeros((4,4))
+        J[0:2, 2:4] = I2        # ∂(qdot)/∂v
+        J[2:4, 0:2] = A_q
+        J[2:4, 2:4] = A_v
+        return J
+
+
 
     if _HAS_SCIPY:
-        sol = solve_ivp(eff_rhs, (0.0, t_final), y0, method='LSODA', max_step=0.01, rtol=1e-6, atol=1e-9)
+        rtol = 1e-6
+        atol = np.array([1e-8, 1e-8, 1e-6, 1e-6])
+        method = 'Radau' if USE_M or USE_N else 'LSODA'
+        jac = eff_jac if USE_M or USE_N else None
+        sol = solve_ivp(eff_rhs, (0.0, t_final), y0, method=method,
+                        jac=jac, max_step=0.01, rtol=rtol, atol=atol, first_step=0.002, dense_output=False)
         Q = sol.y[0:2, :]
         dQ = sol.y[2:4, :]
         t = sol.t

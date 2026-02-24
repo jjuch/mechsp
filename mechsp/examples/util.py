@@ -270,3 +270,72 @@ def compute_I0_with_cache(cache_dir: str,
     if verbose:
         print(f"[I0 cache] Saved I0 (key={key[:10]}...), rel_fit_err={meta.rel_fit_err:.3e}")
     return I0, dict(rel_fit_err=meta.rel_fit_err, cached=False, key=key)
+
+
+# ---------------------------------------------------------------------
+# 7) Build a local SPD anisotropic ΔM target on a stencil
+# ---------------------------------------------------------------------
+
+def build_deltaM_target(
+    q_center: np.ndarray,
+    *,
+    peak_ratio: float,      # desired peak ΔM ≈ peak_ratio * m_ball
+    m_ball: float,
+    sigma_x: float,         # Gaussian std in x
+    sigma_y: float,         # Gaussian std in y
+    anisotropy: float = 2.0,# ΔM principal ratio λx/λy (>1)
+    grid_halfwidth: float = 0.03,
+    step: float = 0.004,
+    freeze_goal: Optional[np.ndarray] = None,
+    freeze_r: float = 0.012,
+    avoid_center: Optional[np.ndarray] = None,
+    avoid_r_in: float = 0.0,
+    avoid_r_out: float = 0.0,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Returns:
+      S_hf:   (J,2) local stencil points around q_center
+      ΔM_des: (J,2,2) SPD anisotropic target (principal axes aligned with world x/y)
+
+    The footprint is Gaussian in space and tapered:
+      - zero near the goal (if freeze_goal provided),
+      - zero inside a moat around an obstacle 'avoid_center'.
+    """
+    # Local grid
+    xs = np.arange(-grid_halfwidth, grid_halfwidth + 1e-12, step)
+    ys = np.arange(-grid_halfwidth, grid_halfwidth + 1e-12, step)
+    X, Y = np.meshgrid(xs, ys, indexing='xy')
+    S = np.stack([X.ravel(), Y.ravel()], axis=1) + q_center[None, :]
+
+    # Gaussian footprint
+    invSig = np.diag([1.0/(sigma_x**2 + 1e-18), 1.0/(sigma_y**2 + 1e-18)])
+    d = S - q_center[None, :]
+    e = np.einsum('ij,jk,ik->i', d, invSig, d)
+    g = np.exp(-0.5 * e)  # (J,)
+
+    # Tapers
+    if freeze_goal is not None:
+        dg = np.linalg.norm(S - freeze_goal[None, :], axis=1)
+        # 0 near goal within freeze_r, rise to 1 by ~1.5*freeze_r
+        u = np.clip((dg - freeze_r) / max(1e-12, 0.5*freeze_r), 0.0, 1.0)
+        s_goal = 10*u**3 - 15*u**4 + 6*u**5
+        g *= s_goal
+
+    if avoid_center is not None and avoid_r_out > avoid_r_in:
+        da = np.linalg.norm(S - avoid_center[None, :], axis=1) 
+        # 0 inside r_in, rise to 1 by r_out
+        u = np.clip((da - avoid_r_in) / max(1e-12, (avoid_r_out - avoid_r_in)), 0.0, 1.0)
+        s_avoid = 10*u**3 - 15*u**4 + 6*u**5
+        g *= s_avoid
+
+    # Anisotropic SPD principal values (aligned with x,y)
+    lam_y = 1.0
+    lam_x = anisotropy * lam_y
+    peak = peak_ratio * m_ball
+
+    J = S.shape[0]
+    DeltaM = np.zeros((J, 2, 2))
+    for j in range(J):
+        A = g[j] * peak * np.diag([lam_x, lam_y])  # SPD 2x2
+        DeltaM[j, :, :] = A
+    return S, DeltaM
