@@ -2,256 +2,175 @@
 
 > :warning: **This work is still under review and should not be used as a formal reference**
 
-**Objective.** We study obstacle‑aware trajectory shaping **without** modifying the goal potential
+# A. Round obstacles
+We derive and tune a **second‑order** obstacle‑aware geometric controller **without** modifying the goal potential:
 $$
 \psi(q)=\tfrac12\|q-q_g\|^2,
 $$
-so that the “heavy lifting” is accomplished by a **Riemannian metric** $M(q)$ and a **skew‑symmetric** field $N(q)$. We formalize the model from the **Lagrangian** up to the **Levi–Civita connection**, explain how the **natural‑gradient flow** and **gyroscopic (skew)** terms arise, derive **near‑obstacle asymptotics**, and end with **tuning rules** (with figures) that are consistent with **Nagumo’s invariance** condition. The figures validate the story and quantify recommended parameter choices.
+so all obstacle intelligence comes from:
+- an **anisotropic metric** $M(q)$ that raises normal “inertia” near the boundary; and
+- a **gyroscopic** two‑form $N(q)$ (skew) that **bends** trajectories but does **no work** on the energy.
 
-> **Short executive summary.**
-> - We keep $ \psi(q)=\tfrac12\|q-q_g\|^2 $ unchanged (no log‑barriers).  
-> - The **metric** $ M(q) $ attenuates normal motion near obstacles; the **skew** term $ N(q)=-N(q)^\top $ bends trajectories but does no work on $ \psi $.  
-> - With normal amplification $ \lambda_n(d)\sim (\sigma/d)^p (p>1) $, the natural‑gradient **normal component** scales as $ g^\natural_n\sim d^{p} $.  
-> - **Nagumo invariance** at the obstacle requires $ n\cdot \dot q \ge 0 $. A **sufficient** and simple law is
->   $$
->   \boxed{\beta(d)=k\,d^{p}\quad (p>1),}
->   $$
->   optionally **tangential‑only** near the boundary (i.e., add $ \beta(d)|g^\natural_n|\,t $), which further protects invariance and bounds curvature.  
-> - We provide a **ring‑based estimate** of a conservative $ k_{\text{safe}} $ and a 4‑step **tuning recipe**.  
-> - Figures **A, B, C, D, F** validate these claims.
+### 1. Euler–Lagrange with Levi–Civita and gyroscopic two‑form
 
----
-
-## 1. Lagrangian with metric $M(q)$, gauge 1‑form $A(q)$, two‑form $B=dA$, and viscous damping
-
-We model the agent on the configuration space $\mathcal Q\subset\mathbb R^2$ via the Lagrangian
-
+We work on $\mathcal{Q}\subset\mathbb{R}^2$ with
+$$\begin{align}
+&\mathcal{L}(q,\dot{q})=\tfrac12\,\dot q^\top M(q)\dot q + A(q)\cdot\dot q - \psi(q),\\ 
+&B=dA,\\ &B(q)^\top=-B(q),
+\end{align}$$
+and add Rayleigh damping $c_dM(q)\dot q$. The Euler–Lagrange equations are:
 $$
-\boxed{\;
-\mathcal L(q,\dot q)=\tfrac12\,\dot q^\top M(q)\,\dot q \;+\; A(q)\!\cdot\!\dot q \;-\; \psi(q)\,,
-\;}
+\boxed{M(q)\ddot q + C(q,\dot q) \dot q + c_d M(q)\dot q + \nabla\psi(q) = N(q) \dot q,}
 $$
-
-with $M(q)\succ0$ (Riemannian metric), $A(q)$ a gauge 1‑form, and **barrier‑free** $\psi(q)=\tfrac12\|q-q_g\|^2$. The **magnetic two‑form** is
-
+with the **Levi–Civita** term
+$$\begin{align}
+\big(C(q,\dot q)\dot q\big)^i &= \sum_{j,k}\Gamma^i_{jk}(q)\dot q^j\dot q^k,\\
+\Gamma^i_{jk} &= \frac12\sum_\ell M^{i\ell}(\partial_j M_{\ell k}+\partial_k M_{\ell j}-\partial_\ell M_{jk}),
+\end{align}$$
+and $N(q) = \begin{bmatrix} 0 & -B(q)\\ B(q) & 0\end{bmatrix}$.
+Define energy $\mathcal{H}(q,\dot q)=\tfrac12\dot q^\top M(q)\dot q+\psi(q)$. Using the Levi–Civita identity and $B^\top=-B$, we get the **exact** balance
 $$
-B(q)\;=\;dA(q)\,,\text{with } B_{ij}(q)=\partial_i A_j(q)-\partial_j A_i(q),\\ B(q)^\top=-B(q).
+\boxed{\dot{\mathcal{H}} = -c_d\dot q^\top M(q)\dot q \le 0,}
 $$
+i.e., geometry $C$ and gyroscopic $B$ **do not** change $\mathcal{H}$. Gyroscopic/skew terms do no work, they bend trajectories without altering energy. [[6]](https://link.springer.com/book/10.1007/978-1-4757-2063-1)
 
-Include a **Rayleigh damping** $$R(q,\dot q)=\tfrac12\,c\,\dot q^\top M(q)\dot q.$$ The Euler–Lagrange equations
+### 2. Obstacle‑aware metric and two‑form
 
+For a disk obstacle with center $c$ and radius $r$, write
+$$\begin{cases}
+d(q)=\|q-c\|-r,\\ n(q)=\frac{q-c}{\|q-c\|},\\ t(q)=J\,n(q),
+\end{cases}$$
+with $J = \begin{bmatrix}0 & -1\\ 1 & 0\end{bmatrix}$ a 90° rotation.
+We shape
 $$
-\frac{\mathrm d}{\mathrm dt}\big(\partial_{\dot q}\mathcal L\big)-\partial_q\mathcal L=\partial_{\dot q}R
+\boxed{M(q)=m_0 I_2+\alpha s(d(q)) n(q)n(q)^\top,\qquad s(d)=\frac{1}{d^2+\varepsilon^2}\;,}
 $$
+with $m_0>0$ the original mass of the agent, $\alpha>0$, $0<\varepsilon\ll r$. This increases the **normal** inertia $m_n=m_0+\alpha s(d)$ as $d\to 0^+$ while keeping the **tangential** inertia $m_t=m_0$ unchanged.
 
-give
-
+We implement the gyroscopic two‑form as
 $$
-\boxed{\;
-M(q)\,\ddot q \;+\; C(q,\dot q)\,\dot q \;+\; c\,M(q)\,\dot q \;+\; \nabla\psi(q)
-\;=\; B(q)\,\dot q\,,
-\;}
+\boxed{\;N(q)=B(q)J,}
 $$
-
-where $C(q,\dot q)\dot q$ comes from the **Levi–Civita connection** of $M$, componentwise:
-
+and will compare four laws:
 $$
-\big(C(q,\dot q)\dot q\big)^i=\sum_{j,k}\Gamma^i_{jk}(q)\,\dot q^j\dot q^k,\\
-\Gamma^i_{jk}=\frac12\,\sum_\ell M^{i\ell}\Big(\partial_j M_{\ell k}+\partial_k M_{\ell j}-\partial_\ell M_{jk}\Big).
+B(q)\in\{ 0 \text{ (none)}; \text{const}; \propto d^{p-1}; \propto d^{p} \}.
 $$
+The last law $B(q)=k\,d^{p}$ is the **final tuning** we’ll defend below: it aligns the gyroscopic **normal injection** with the metric’s near‑boundary scaling.
 
-Define the **total energy**
+> **Why not a barrier in $\psi$?**  
+> We want the **entire** obstacle intelligence to come from $M$ and $N$ so that tuning and geometric interpretation are explicit—much like in classical Artificial Potential Fields (APF) and Navigation Function (NF) literature but now in a **second‑order** setting, where swirl near obstacles is well known if the gains are not distance‑aware. [[1]](https://link.springer.com/content/pdf/10.1007/s41884-020-00028-0.pdf)[[2]](https://www.mathnet.ru/php/getFT.phtml?jrnid=iimi&paperid=466&what=fullt&option_lang=eng)
 
+### 3. Near‑obstacle asymptotics & a Nagumo‑like test
+
+Let $R=[\vec t , \vec n]$ be the local frame on the boundary, then
+$$\begin{cases}
+M=R\ \mathrm{diag}(m_t, m_n)R^\top,\\ m_t=m_0,\\ m_n=m_0+\alpha s(d).
+\end{cases}$$
+The **natural gradient** under this metric is a projection of the standard gradient $\nabla f = [g_t^{*} \vec t + g_n^{*} \vec n]$ under a rescaling of the metric: $\tilde \nabla f = M^{-1}\nabla f$. This is an improved  gradient  in non-euclidian contexts, such as with anisotropic inertia. Matrix $R$ is an orthogonal matrix, thus its inverse is 
 $$
-V(q,\dot q):=\tfrac12\,\dot q^\top M(q)\,\dot q+\psi(q).
+M^{-1} = R\ \mathrm{diag}(1/m_t, 1/m_n) R^\top.
 $$
-
-Using the Levi–Civita identity $$\dot q^\top C(q,\dot q)\dot q=\tfrac12\,\dot q^\top \dot M(q)\,\dot q$$ and the skewness of $B$, we obtain the **exact energy balance** (no overdamped assumption):
-
+So the natural gradient has components $g_t=\mathcal O(1)$ and $g_n\sim C d^{p}$ (because $m_n\sim \alpha/d^2$ so $m_n^{-1}\sim d^2$ with $p>1$ we retain sufficient vanishing near the boundary). The gyroscopic injection along the **normal** at a boundary graze is
 $$
-\boxed{\;
-\dot V \;=\; -\,c\,\dot q^\top M(q)\,\dot q \;\le\; 0\,,\qquad
-\text{(both \(C\) and \(B\) do no work on \(V\)).}
-\;}
+\vec n \cdot (N(q)\dot q)=B(q)(\vec t\cdot\vec{\dot{q}}).
 $$
-
-#### 1.1 Skew map as a block rotation $N(q)$ in the $(t,n)$ frame
-Let the **signed distance** to the nearest obstacle be $ d(q) $ (positive outside, zero on the boundary). At a boundary point, define the **outward unit normal** $ n(q) $, and let $ t(q)=J n(q) $ denote the in‑plane **tangent** (90° rotation). We use the orthonormal frame $ R=[\,t\;n\,].$
-
-In 2‑D, every two‑form is a scalar field times the canonical rotation: $B(q)=b(q)\,J$. In the local orthonormal frame $R=[t\;\;n]$ attached to the obstacle boundary, write the velocity as $$v= v_t\,t+v_n\,n.$$ Then
-
+Thus, to avoid inward push arbitrarily close to the boundary, a **second‑order Nagumo‑like** condition (at grazing: $n \cdot \vec v=0$) asks for
 $$
-\begin{align}
-B(q)\,v&=b(q)\,J\,v\\&=b(q)\,(v_t\,Jt+v_n\,Jn)\\&=b(q)\,(v_t\,n-v_n\,t).
+\boxed{\vec n \cdot \vec a \ge 0\quad\text{for }d\to 0^+.}
+$$
+Choosing
+$$
+\boxed{B(q)=k d(q)^{p},\quad p>1\,}
+$$
+makes the gyroscopic normal term **vanish** at the **same order** as the metric’s normal suppression, preserving boundary invariance while keeping the **curvature** bounded. Note that 
+$$\begin{align}
+m_n(d)&=m_0+\alpha s(d)\sim \frac{\alpha}{d^2+\varepsilon^2} \\ 
+&\Rightarrow\quad
+|\kappa|(d) \approx \frac{b(d)}{m_n(d) \|v\|}\\&\sim\;\frac{k d^p}{\alpha/(d^2+\varepsilon^2)}\frac{1}{\|v\|}
+\sim \frac{k}{\alpha} \frac{d^{p+2}}{\|v\|} .
+\end{align}$$
+
+Hence, for **$p>1$**, $|\kappa|$ not only remains **bounded** but actually **tends to zero** as $d\to 0^+$. Therefore the absolute curvature maps look flat in the near‑field and a **contrast** or **normalized** view is needed to see the improvement ring. 
+
+The curvature of the gyroscopic part can be approximated by observing that the magnetic lateral acceleration magnitude is 
+$$
+\begin{align}\|a^{(B)}\| &= \frac{\|B(q)J\dot{q}\|}{m_{eff}}\\
+&\approx \frac{|B(q)| \|\dot{q}\|}{m_{eff}},
 \end{align}
 $$
-
-In the coordinates $(v_t,v_n)$, the action of $B$ is the **block rotation**
-
-$$
-\boxed{\;
-N(q)\;\equiv\;\begin{bmatrix}0& -\,b(q)\\[2pt] b(q)& 0\end{bmatrix},
- \text{i.e.}\\
-\begin{bmatrix} \dot v_t\\ \dot v_n \end{bmatrix}_{\!\!B\text{-part}}
-\;=\;
-\begin{bmatrix}0& -\,b(q)\\ b(q)& 0\end{bmatrix}
-\begin{bmatrix} v_t \\ v_n \end{bmatrix}.
-\;}
-$$
-
-This results in a pure gyroscopic connection $N(q)$: a **skew** coupling that bends $(v_t,v_n)$ without doing work.
-
-> Relation to a **first‑order** bending term. In a **designed** first‑order field $$\dot q = -G^{-1}\nabla\psi + \beta(\cdot)J\,G^{-1}\nabla\psi,$$ the scalar $\beta(\cdot)$ plays the role of the **distance‑dependent** “magnetic” strength. In the full second‑order system above, the *implemented* gyroscopic strength is $b(q)$ in $B=bJ$. The two are related through the inertial/damping scales of the controller/plant; see the tuning note in §5.2.
+so from $a_n = v^2\kappa$ we find that the curvature of the trajectories can be approximated as
+$$\kappa_B\approx \frac{k d(q)^p}{m_{eff}\|\dot q\|}$$
+(curvature of integral curves scales like $|\kappa|\sim |v\times a|/|v|^3$, so unbounded $B(q)$ can explode $\kappa$ at small $d$). This is the second‑order counterpart of the APF folklore (*distance‑aware swirl*) and the formal **viability** lens (boundary tangency). [[1]](https://link.springer.com/content/pdf/10.1007/s41884-020-00028-0.pdf)[[4]](https://cs.stanford.edu/group/manips/publications/pdfs/Khatib_1985.pdf)
 
 ---
 
-## 2. Near‑obstacle asymptotics (second‑order)
+### 4. What the data say
 
-Let the **inverse metric** be
+We now simulate the full **second‑order** model (Euler–Lagrange with Levi–Civita and gyroscopic two‑form) using  
+$$\begin{cases}
+\alpha=0.8,\\ 
+p=2.5,\\
+\varepsilon=0.08,\\
+k_B=0.6
+\end{cases}$$ and a moderate damping $c_d=1.2$ that guarantees **convergence** while retaining **some** underdamped behavior in turns. We will now go throug some images that are obtained with [´scripts/tuning_roundObstacle.py´](scripts/tuning_roundObstacle.py)
 
-$$
-G^{-1}(q)=R\,\mathrm{diag}\!\big(1,\tfrac{1}{\lambda_n(d)}\big)\,R^\top,\\
-\lambda_n(d)=1+\Big(\frac{\sigma}{d}\Big)^{p},\ \ p>1,
-$$
+#### 4.1 A — Boundary invariance vs distance (second‑order grazing test)
 
-so that the **natural gradient** satisfies, for bounded $\nabla\psi$,
+![´scripts/figs/figA_invariance_rings_SO.png´](scripts/figs/figA_invariance_rings_SO.png)
 
-$$
-g^\natural_t=\langle G^{-1}\nabla\psi,t\rangle=\mathcal O(1),\\
-g^\natural_n=\langle G^{-1}\nabla\psi,n\rangle\sim C\,d^{p}\quad(d\to0^+).
-$$
+We evaluate the **fraction** of boundary samples (rings in $d$, angles, and a few tangential grazing speeds) that satisfy the **second‑order Nagumo‑like** condition $\vec n\cdot \vec a\ge 0$ at **grazing** ($\vec n\cdot \vec v=0$).
 
-The **first‑order** picture (used for analysis and in the figures) gives
+*   **metric + gyroscopic $d^{p}$** (and **TAN $d^{p}$**) approach **full compliance** as $d\to 0$, in line with the asymptotics.
+*   **metric only** can be compliant at many distances thanks to the strong normal inertia, but **worst‑case $\vec n\cdot\vec a$** remains less favorable than with $d^p$ in the smallest‑$d$ regime.
+*   **const** and **$d^{p-1}$** retain violations near the boundary: gyroscopic normal injection does not vanish fast enough.
 
-$$
-n\cdot\dot q \;=\; -\,g_n^\natural + \beta(d)\,g_t^\natural
-\;\approx\; -\,C_1\,d^{p} + \beta(d)\,C_2\,.
-$$
+#### 4.2 B — Trajectories by mode
 
-By **Nagumo’s invariance** condition, a **sufficient** choice is
+![´scripts/figs/figB_trajectories_modes_SO.png´](scripts/figs/figB_trajectories_modes_SO.png)
 
-$$
-\boxed{\;\beta(d)=k\,d^{p}\,,\qquad p>1,\;}
-$$
+Each panel overlays **second‑order trajectories** (four starts; small initial tangential velocity to expose underdamping) on an **acceleration streamline** backdrop evaluated at **grazing speed**.
 
-optionally **tangential‑only** (replace $J\,g^\natural$ by $|g^\natural_n|\,t$) to remove normal injection.
+*   **metric only** often looks “decent,” but **metric+mag $d^{p}$** and especially **TAN $d^{p}$** turn **earlier** and **cleaner** near the obstacle without skimming it—exactly what the invariance test predicts.
+*   **const** and **$d^{p-1}$** either skim or inject too much normal acceleration near the boundary.  
+    The **TAN** flavor moderates curvature while preserving progress, which the next plots quantify.
 
-In the **second‑order** system, along the **normal** direction,
+#### 4.3 C — Ring-averaged outward/tangential *accelerations* (grazing)
 
-$$
-n\cdot\ddot q \;=\; n\cdot M^{-1}\!\Big(B\dot q - C(q,\dot q)\dot q - c\,M\dot q - \nabla\psi\Big).
-$$
+![´scripts/figs/figC_ring_accels_SO.png´](scripts/figs/figC_ring_accels_SO.png)
 
-Near $d=0$ with $v_n\to0$, we have:
+Here, we report $\langle\max(0, n\!\cdot a)\rangle$ and $\langle|t\!\cdot a|\rangle$ at **grazing**.
 
-*   $n\cdot\big(B\dot q\big)=b(d)\,(t\cdot\dot q)$, i.e., **gyroscopic normal injection** proportional to the **tangential speed** and to $b(d)$;
-*   $n\cdot(C\dot q)=\mathcal O(\|\dot q\|^2)$ (quadratic in speed);
-*   damping contributes $ -c\, n\cdot\dot q$ (scaled by local metric), and $\nabla\psi$ is bounded.
+*   **$d^p$** keeps outward **normal acceleration** nonnegative in the small‑$d$ regime and still provides **tangential acceleration**, that is, it can “slide and turn” without pushing inward.
+*   **const** and **$d^{p-1}$** have higher tangential acceleration but at the expense of **inward** normal acceleration near the boundary; **metric only** has small tangential acceleration (conservative but slower).
 
-Thus, to **suppress** inward normal acceleration arbitrarily close to the boundary, it suffices to ensure $b(d)\to 0$ sufficiently fast. Choosing
+#### 4.4 D — Curvature maps: near‑field contrast
 
-$$
-\boxed{\;b(d)=\bar k\,d^{p}\quad (p>1)\;}
-$$
+figs/figD\_curvature\_dp\_SO.png
+![´scripts/figs/figD_curvature_dp_SO.png´](scripts/figs/figD_curvature_dp_SO.png)
 
-makes the gyroscopic normal term $b(d)\,(t\cdot\dot q)$ of order $\mathcal O(d^p)$, which vanishes faster than any bounded tangential speed can create a persistent inward pull. With the **energy identity** $$\dot V=-c\,\dot q^\top M\dot q\le 0$$ and the **metric** boundary layer ($g^\natural_n\sim d^p$), this preserves exactly the **same tuning law** as in the first‑order analysis.
+We display $|\kappa|$ for **full $d^p$** and **TAN $d^p$** and, in the third panel, a **near‑field contrast** $\Delta \kappa_{\text{near}}=(|\kappa|_{\text{const}}-|\kappa|_{d^p})w_{\text{near}}(d)$ with $w_{\text{near}}$ suppressing far‑field influence.
 
-**Conclusion.** Keeping **$C(q,\dot q)$** and **$B(q)$** in the **underdamped** equations does **not** change the **exponent $p$** nor the **distance law** for the skew intensity. Use $$\beta(d)=k\,d^{p}$$ in the first‑order design (figures), or $$b(d)=\bar k\,d^{p}$$ in the second‑order $B=bJ;$ the two constants $k,\bar k$ differ by implementation/damping scales (see §5.2).
+*   The raw $d^p$ curvature **tends to zero** at the boundary (metric makes $m_n$ blow up), so **absolute maps** look flat in the near‑field—this is expected from the theory.
+*   The **near‑field contrast** makes the **benefit ring** around the obstacle visible: **$d^p$** (and TAN) **reduce** curvature relative to **const** in that annulus; the far‑field is de‑emphasized by $w_{\text{near}}$.  
 
+#### 4.5 F — Conservative safe gain $$k$$ for $$b(d)=k\,d^{p}$$
 
----
+![´scripts/figs/figF_kmax_safe_SO.png´](scripts/figs/figF_kmax_safe_SO.png)
 
-## 4. Near‑obstacle asymptotics, curvature, and boundedness
+Same ring‑based diagnostic as before, but with the **natural gradient** under your metric $M(q)$. We plot $k_{\max}(d)=\max\{g_n/(d^{p}g_t)\}$ and suggest $k_{\text{safe}}=\frac12\min_d k_{\max}(d)$. The **optimized** $k_B=0.6$ falls comfortably below the conservative envelope obtained at $(\alpha=0.8,p=2.5,\varepsilon=0.08)$.
 
-- **Normal asymptotics.** Because $ g_n^\natural\sim d^p $, the boundary layer enforces **vanishing normal speed** as $ d\to 0 $. With $\beta(d)=k d^{p}$, the skew injection is of higher‑order smallness and does not override the metric shielding.
-
-- **Curvature.** In many APF‑like designs the curvature of streamlines scales approximately like $ \kappa\sim \beta(d)/d $. Hence naive constant gains can make $ \kappa $ blow up near the boundary (the classical “swirl” issue). Choosing $ \beta(d)=k d^{\alpha} $ with $ \alpha\ge 1 $ bounds curvature as $ d\to 0 $; our choice $ \alpha=p>1 $ is therefore **curvature‑friendly** as well as **invariance‑friendly**.
-
-> These ideas were foreshadowed in the APF literature (swirl near obstacles), and formalized in viability theory (boundary tangency). We leverage them without modifying the potential.
+> **Take‑home.** With the optimized $(\alpha,p,\varepsilon,k_B)$, **metric+mag $d^p$** (and **TAN $d^p$**) achieve **better boundary compliance** and **cleaner turns** in the annulus where it matters, while the **metric** provides a robust normal shield. The raw curvature near the obstacle **vanishes** (as theory predicts), so we visualize **contrast** (or **normalized curvature**) to reveal the improvement ring.
 
 ---
 
-## 5. Practical tuning recipe
+## 5. Tuning rules (second order, final)
 
-#### 5.1 Practical rules (first‑order figures)
+1. **Metric:** choose $p>1$ and small $\varepsilon\ll r$ in $M(q)=m_0 I+\alpha s(d)nn^\top$ with $s(d)=1/(d^2+\varepsilon^2)$. Larger $\alpha$ narrows the boundary layer.  
+2. **Gyroscopic law:** set $\boxed{b(d)=k\,d^{p}}$ near the obstacle (tangential‑only modulation optional extremely close to the boundary).  
+3. **Gain selection:** read **$k_{\text{safe}}$** off the F5 chart and set $k\le k_{\text{safe}}$.  
+4. **Damping:** keep $c$ small enough to exhibit **underdamped agility** but not so small that numerical stiffness dominates. Energy still decays by design.
 
-1.  Pick **$p>1$** and $\sigma$ in $\lambda_n(d)=1+(\sigma/d)^p$.
-2.  Use **$\beta(d)=k\,d^p$** (tangential‑only optional).
-3.  Validate with **ring sampling** (Figs. A–D).
-4.  Take **$k_{\text{safe}}$** from Fig. F and use $k\le k_{\text{safe}}$.
-
-#### 5.2 Mapping to second‑order $$B(q)=b(q)\,J$$
-
-If you **implement** gyroscopic bending in the **second‑order** model via $B=b(d)\,J$,
-
-$$
-M\ddot q + C(q,\dot q)\dot q + c M\dot q + \nabla\psi = B\,\dot q,
-$$
-
-choose
-
-$$
-\boxed{\;b(d)=\bar k\,d^{p},\quad p>1,}
-$$
-
-with $\bar k$ set so that the **effective** bend matches the first‑order $\beta(d)=k\,d^p$ at typical operating speeds (the mapping is linear in the relevant scale: $\beta \sim \alpha\,b$, where $\alpha$ depends on the controller/plant gain $c$ and on how you nondimensionalize). The **exponent $p$** and the **distance‑law** $d^p$ are **unchanged**.
-
-> **Levi–Civita in simulation.**  
-> • If you integrate **first‑order**, $\Gamma$ does not appear (you’re not integrating $\ddot q$).  
-> • If you integrate **second‑order** (as above), include $C(q,\dot q)\dot q$. It **does not** alter the tuning exponents (it is quadratic in $\dot q$ and does no work on $V$); it may shift **constants** (e.g., the numerical $k_{\text{safe}}$) - the ring‑based procedure captures that.
-5. **(Optional) Certified safety.** If a proof‑level guarantee is needed under model mismatch or numerical stepping, wrap the nominal field in a **CBF–QP** enforcing $ \dot h\ge -\alpha h $ with $ h=d(q) $.
-
----
-
-## 6. Figures 
-
-### A. First-order model
-
-All figures are generated by [`tuning_firstOrder_figures.py`](scripts/tuning_firstOrder_figures.py).
-
-- **Fig A — Invariance on rings.** Fraction of $n\cdot v<0$ points vs $d$ for several gains.  
-  ![`scripts/figs/figA_invariance_rings.png`](scripts/figs/figA_invariance_rings.png)
-
-- **Fig B — Trajectories.** Metric‑only, +magnetic (const), +magnetic $\beta\sim d^{p-1}$, +magnetic $\beta\sim d^{p}$, and **tangential‑only** $\beta\sim d^{p}$.  
-  ![`scripts/figs/figB_trajectories_modes.png`](scripts/figs/figB_trajectories_modes.png)
-
-- **Fig C — Ring‑averaged speeds.** Outward normal vs tangential speed vs $d$.  
-  ![`scripts/figs/figC_ring_speeds.png`](scripts/figs/figC_ring_speeds.png)
-
-- **Fig D — Curvature maps.** $|\kappa|$ for full vs tangential‑only $\beta\sim d^{p}$.  
-  ![`scripts/figs/figD_curvature_dp.png`](scripts/figs/figD_curvature_dp.png)
-
-- **Fig F — Safe‑gain chart.** $k_{\max}(d)$ and suggested $k_{\text{safe}}$.  
-  ![`scripts/figs/figF_kmax_safe.png`](scripts/figs/figF_kmax_safe.png)
-
-### B. Second-order model
-
-All figures are generated by [`tuning_secondOrder_figures.py`](scripts/tuning_secondOrder_figures.py).
-
-*   **S1 — Trajectories (2nd‑order)** for several initial states and four “magnetic” laws:  $b(d)\in\{\text{none},\ \text{const},\ d^{p-1},\ d^{p}\}$.
-![`scripts/figs2/figS1_trajectories_second_order.png`](scripts/figs2/figS1_trajectories_second_order.png)
-*   **S2 — Energy $V(t)$ decay**, confirming $\dot V\le0$ for all laws (gyroscopic & Levi–Civita do no work).
-![`scripts/figs2/figS2_energy_decay.png`](scripts/figs2/figS2_energy_decay.png)
-*   **S3 — Minimum distance** $ \min_t d(t)$ as a safety proxy for each law; **$d^p$** law avoids near‑grazing/collisions that appear with **const** or **$d^{p-1}$**.
-![`scripts/figs2/figS3_min_distance.png`](scripts/figs2/figS3_min_distance.png)
-*   **S4 — First‑ vs second‑order path** overlay (with $\beta(d)=k\,d^p$ vs $B=d^pJ$), showing **qualitatively similar** paths (same law).
-![`scripts/figs2/figS4_first_vs_second.png`](scripts/figs2/figS4_first_vs_second.png)
-*   **S5 — Safe‑gain chart (2nd‑order)**, obtained from the same **ring‑based** estimate $k_{\max}(d)=\max(g_n^\natural/(d^p g_t^\natural))$; we suggest a conservative $k_{\text{safe}}=\frac12\min_d k_{\max}(d)$.
-![`scripts/figs2/figS5_kmax_safe_second_order.png`](scripts/figs2/figS5_kmax_safe_second_order.png)
-
-> **Parameters used in the example.**  
-> $p=2$, $\sigma=0.25$, damping $c=1.5$, obstacle: one disk of radius $0.5$ at the origin, goal $(1.2,1.1)$. We used $b(d)=\bar k\,d^p$ with $\bar k=1$.
-
-
----
-
-## 7. Limitations and extensions
-
-- **Continuous‑time vs numerics.** Nagumo invariance is a continuous‑time condition; explicit integrators and large steps can cause small penetrations. Use smaller steps near obstacles or a discrete‑time safety filter.
-
-- **Speed normalization.** To compare “time to goal” across modes fairly, normalize speed away from the boundary layer; otherwise metric anisotropy also rescales speeds.
-
-- **Second‑order (mechanical) systems.** In dynamics, skew (gyroscopic) terms still do no work; combine metric shaping with damping injection. For hard safety: CBF–QP atop the geometric field.
+> **Context.** APF and NF methods motivate distance‑aware shaping near obstacles; we keep the potential **unchanged** and put all structure into $M$ and $B$, guided by the **second‑order** near‑boundary balance and a viability/Nagumo‑like test. [[1]](https://link.springer.com/content/pdf/10.1007/s41884-020-00028-0.pdf)[[2]](https://www.mathnet.ru/php/getFT.phtml?jrnid=iimi&paperid=466&what=fullt&option_lang=eng)
 
 ---
 

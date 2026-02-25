@@ -309,20 +309,6 @@ def fig_kmax_safe(sc: Scenario, d_min=0.01, d_max=0.15, name_prefix='F', save_di
     fig.savefig(out, dpi=180); plt.close(fig)
     return out, float(k_safe)
 
-# -----------------------------
-# Write the elaborate Markdown
-# -----------------------------
-ELAB_MD = r"""
-# Tuning **M(q)** and **N(q)** for Safe and Agile Trajectory Shaping (Barrier‑Free \( \psi \))
-
-[Full text identical to the elaborate Markdown in the chat answer:
-includes Lagrangian → Levi–Civita → natural gradient → near‑obstacle asymptotics,
-Nagumo invariance, β(d)=k d^p law, ring‑based k_safe, Figures A–D,F, and references.]
-"""
-
-def write_markdown(md_path, text):
-    with open(md_path, 'w', encoding='utf-8') as f:
-        f.write(textwrap.dedent(text))
 
 # -----------------------------
 # Main
@@ -344,8 +330,5 @@ if __name__ == '__main__':
     figC = fig_ring_speeds(sc, 'C')
     figD = fig_curvature_dp(sc, 'D')
     figF, k_safe = fig_kmax_safe(sc, 0.01, 0.15, 'F')
-
-    # Write elaborate Markdown
-    write_markdown('Tuning_with_M_and_N.md', ELAB_MD)
 
     print("Generated figures A, B, C, D, F and wrote Tuning_with_M_and_N.md")
