@@ -566,13 +566,12 @@ def figD_curvature_maps(prm: Params, save_as):
 # FIG F: Conservative safe k for b(d)=k d^p (second-order design)
 # (same ring-based diagnostic but with G^{-1} from M(q))
 # -----------------------------
-def figF_kmax_safe(prm: Params, save_as, d_min=0.01, d_max=0.35):
-    print('Figure F')
+def ksafe_from_metric(prm, d_min=0.0, d_max=1.0):
     Ds = np.geomspace(d_min, d_max, 24)
     thetas = np.linspace(0, 2*np.pi, 360, endpoint=False)
-    kmax_d=[]
+    kmax_d = []
     for d in Ds:
-        ks=[]
+        ks = []
         for th in thetas:
             q = prm.obs.c + (prm.obs.r + d) * np.array([np.cos(th), np.sin(th)])
             Ginv, n, t, dd = Ginv_of_q(q, prm)
@@ -582,6 +581,12 @@ def figF_kmax_safe(prm: Params, save_as, d_min=0.01, d_max=0.35):
         kmax_d.append(np.nan if len(ks)==0 else np.max([k for k in ks if k>0]))
     kmax_d = np.array(kmax_d)
     k_safe = 0.5*np.nanmin(kmax_d)
+    return Ds, kmax_d, k_safe
+
+
+def figF_kmax_safe(prm: Params, save_as, d_min=0.01, d_max=0.35):
+    print('Figure F')
+    Ds, kmax_d, k_safe = ksafe_from_metric(prm, d_min=d_min, d_max=d_max)
 
     fig, ax = plt.subplots(1,1, figsize=(6.4,4.2))
     ax.plot(Ds, kmax_d, 'o-', label='ring-wise k_max(d)')
@@ -600,7 +605,7 @@ def figF_kmax_safe(prm: Params, save_as, d_min=0.01, d_max=0.35):
 # -----------------------------
 # MAIN
 # -----------------------------
-def main(optimise=True, filename=None):
+def main(optimise=True, optimise2=True, filename=None):
     obs = Obstacle(c=np.array([0.0, 0.0]), r=0.5)
     base = Params(qg=np.array([1.2, 1.0]), obs=obs, m0=1.0, alpha=1.2, eps=0.05, p=2.0, c_damp=1.2, kB=1.0, k_psi=1.0)
 
@@ -650,6 +655,67 @@ def main(optimise=True, filename=None):
         with open('best_config.json','w') as f: json.dump(best,f,indent=2)
         print('Best config:', best)
 
+    elif optimise2:
+        d_star = 0.08        # design distance (m) where shield is specified
+        d_min  = 0.01        # smallest ring for k_safe
+        m0     = 1.0
+        eps    = 0.10        # keep eps fixed or add it to the sweep if desired
+        c_damp = 0.8         # moderate damping to show underdamping but ensure convergence
+
+    
+        # Sweep sets (playbook knobs)
+        LAMBDA = [4, 6, 8, 10, 12]  # shield ratios at d_star
+        P_LIST = [1.5, 2.0, 2.5]    # decay exponents for b(d)=k d^p (or TAN)
+        ETA    = [0.02, 0.05, 0.10] # fraction of conservative safe k
+
+        starts = [
+            np.array([-1.6, -1.4]), np.array([-1.4, 0.6]),
+            np.array([ 0.6, -1.5]), np.array([-1.0, 1.6])
+        ]
+
+        rows = []
+        for i, (L, p, eta) in enumerate(itertools.product(LAMBDA, P_LIST, ETA)):
+            print(f"{i}/{len(itertools.product(LAMBDA, P_LIST, ETA))} lambda: {L} | p: {p} | eta: {eta}")
+            # Map (L, eps, d_star) to alpha
+            alpha = (L - 1.0) * m0 * (d_star**2 + eps**2)
+
+            # Build params (kB will be filled after we compute safe k)
+            prm_tmp = Params(qg=np.array([1.2, 1.0]),
+                            obs=Obstacle(c=np.array([0.0,0.0]), r=0.5),
+                            m0=m0, alpha=alpha, eps=eps, p=p, c_damp=c_damp, kB=0.0)
+
+            # Conservative safe k from Fig-F routine restricted to [d_min, d_star]
+            _, _, k_safe = ksafe_from_metric(prm_tmp, d_min=d_min, d_max=d_star)
+
+            # Set magnetic gain from fraction eta of conservative bound
+            prm_tmp.kB = eta * k_safe
+
+            # Evaluate metrics with and without magnet
+            met  = trajectory_metrics(prm_tmp, 'none', starts, h=0.05, tmax=20.0)
+            full = trajectory_metrics(prm_tmp, 'dp',   starts, h=0.05, tmax=20.0)
+            bcomp= boundary_compliance(prm_tmp, 'dp')
+
+            rows.append({
+                'Lambda':L, 'p':p, 'eta':eta, 'alpha':alpha,
+                'eps':eps, 'kB':prm_tmp.kB, 'c_damp':c_damp,
+                'min_d': min(met['min_d'], full['min_d']),
+                'conv_rate': min(met['conv_rate'], full['conv_rate']),
+                't_goal_mean': full['t_goal_mean'],
+                'overshoot_mean': full['overshoot_mean'],
+                'curv95_mean': full['curv95_mean'],
+                'bndry_comp': bcomp
+            })
+
+        
+        # Save & pick best (same selection as before)
+        with open('sweep_results_Lambda.csv','w',newline='') as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            w.writeheader(); w.writerows(rows)
+
+        best = rank_and_select(rows)  # your lexicographic filter
+        with open('best_config_Lambda.json','w') as f: json.dump(best,f,indent=2)
+        print('Best config:', best)
+
     elif filename is not None: 
         with open(filename,'r') as f: 
             best = json.load(f)
@@ -663,12 +729,13 @@ def main(optimise=True, filename=None):
     else:
         prm_best = base
 
-    # figA_invariance(prm_best, 'figs/figA_invariance_rings_SO.png')
-    # figB_trajectories(prm_best,'figs/figB_trajectories_modes_SO.png')
-    # figC_ring_accels(prm_best,'figs/figC_ring_accels_SO.png')
+    figA_invariance(prm_best, 'figs/figA_invariance_rings_SO.png')
+    figB_trajectories(prm_best,'figs/figB_trajectories_modes_SO.png')
+    figC_ring_accels(prm_best,'figs/figC_ring_accels_SO.png')
     figD_curvature_maps(prm_best,'figs/figD_curvature_dp_SO.png')
-    # figF_kmax_safe(prm_best,'figs/figF_kmax_safe_SO.png')
+    figF_kmax_safe(prm_best,'figs/figF_kmax_safe_SO.png')
     print('Generated second-order figures: A, B, C, D, F')
 
 if __name__ == "__main__":
-    main(optimise=False, filename="best_config.json")
+    # main(optimise=False, optimise2=False, filename="best_config.json")
+    main(optimise=False, optimise2=False, filename="best_config_Lambda.json")
