@@ -181,3 +181,7 @@ Same ring‑based diagnostic as before, but with the **natural gradient** under 
 3. H. Kumar, S. Paternain, A. Ribeiro, “Navigation of a Quadratic Potential with Ellipsoidal Obstacles,” *arXiv:1908.08509*, 2022.  
 4. A.D. Ames, X. Xu, J.W. Grizzle, P. Tabuada, “Control Barrier Function Based Quadratic Programs for Safety Critical Systems,” *IEEE TAC*, 2016.  
 5. (Background) Texts on Riemannian/natural gradients and viability/Nagumo conditions.
+6. O. Khatic, "The Potential Field Approach And Operational Space Formulation In Robot Control", In: Narendra, K.S. (eds) Adaptive and Learning Systems. Springer, Boston, MA, 1986.
+7. Ratliff, N., Issa, J., & Kappler, D. (2020). Geometric Fabrics: Generalizing Classical Mechanics to Design Orbital Policies. -> "swirl" (gyroscopic term) defined within a Finsler-geometry framework/fundamentally the closest work to this.
+8. Ratliff, N., et al. (2018). RMPflow: A Geometric Framework for Generation of Safe Motion. -> adaptation of M(q) metric
+9. Huber, L., Billard, A., & Slotine, J. J. (2019). Avoidance of Convex and Concave Obstacles with Convergence Confirmation using Dynamical Systems. -> using mass matrix to alter dynamics, but doesn't take Levi-Civita identity into account.

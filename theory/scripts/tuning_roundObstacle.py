@@ -312,6 +312,31 @@ def acc_field_on_grid(prm: Params, law: str, vt_stream=0.6, Nx=60, Ny=60):
             U[j,i], V[j,i] = a
     return XX, YY, U, V
 
+def generate_initial_positions(prm: Params, num=5, plot=False):
+    r = prm.obs.r
+    c = prm.obs.c
+    qg = prm.qg
+
+    slope = (qg - c)/np.linalg.norm(qg - c)
+    pt0 = -2.5 * r * slope + c
+    perp_slope = np.array([slope[1], -slope[0]])
+    pt = lambda x: x*perp_slope + pt0
+    points = np.linspace(-1.5*r, 1.5*r, num)
+    res = np.array([pt(p) for p in points])
+
+    if plot:
+        fig = plt.figure()
+        ax = plt.axes()
+        ax = fig.add_axes(ax)
+        ax.add_patch(Circle(c, r, color='b', alpha=0.6))
+        ax.plot(qg[0], qg[1], 'c*', ms=12)
+        ax.plot(res[:, 0], res[:, 1], 'r*')
+        ax.set_aspect('equal')
+        plt.show()
+    
+    return res
+
+
 
 # -----------------------------
 # FIG A: Invariance vs d (second-order grazing test) + worst-case n·a
@@ -375,7 +400,7 @@ def figA_invariance(prm: Params, save_as):
 # -----------------------------
 # FIG B: Trajectories by mode + acceleration streamlines (grazing)
 # -----------------------------
-def figB_trajectories(prm: Params, save_as):
+def figB_trajectories(prm: Params, save_as, q0=None):
     print("Figure B")
     modes = [
         ('no metric & no mag',   {'alpha':0.0,        'law':'none'}),
@@ -385,12 +410,18 @@ def figB_trajectories(prm: Params, save_as):
         ('metric+mag d^{p}',     {'alpha':prm.alpha,  'law':'dp'}),
         ('metric+mag TAN d^{p}', {'alpha':prm.alpha,  'law':'tan'}),
     ]
-    starts = [np.array([-1.6,-1.4]), np.array([-1.4,0.6]),
-              np.array([ 0.6,-1.5]), np.array([-1.0,1.6])]
-    # fig, axes = plt.subplots(int(np.ceil(len(modes)/2)), 2, figsize=(4.6*len(modes), 4.2))
-    fig, axes = plt.subplots(1, len(modes), figsize=(4.6*len(modes), 4.2))
+    if q0 is None:
+        starts = generate_initial_positions(prm)
+    else:
+        starts = q0
 
-    for ax, (title, cfg) in zip(axes, modes):
+    # starts = [np.array([-1.6,-1.4]), np.array([-1.4,0.6]),
+    #           np.array([ 0.6,-1.5]), np.array([-1.0,1.6])]
+
+    fig, axes = plt.subplots(int(np.ceil(len(modes)/2)), 2, figsize=(4.6*2, 4.2*len(modes)/2))
+    # fig, axes = plt.subplots(1, len(modes), figsize=(4.6*len(modes), 4.2))
+
+    for ax, (title, cfg) in zip(axes.flatten(), modes):
         print(f"law: {cfg['law']}")
         prm_loc = Params(**{**prm.__dict__, 'alpha':cfg['alpha']})
         # background: acceleration field at grazing speed (so B shows)
@@ -403,11 +434,11 @@ def figB_trajectories(prm: Params, save_as):
         ax.plot(prm.qg[0], prm.qg[1], 'r*', ms=12)
 
         # trajectories (second order; small tangential v0 to show underdamping)
-        for q0 in starts:
-            print(f"q0 = {q0}")
+        for i, q0 in enumerate(starts):
+            print(f"{i+1} / {len(starts)}: q0 = {q0}")
             d, n, t = dist_n_t(q0, prm.obs)
             v0 = 0.35*t
-            _, Xs, _ = simulate(prm_loc, cfg['law'], q0, v0, h=0.05, tmax=20.0)
+            _, Xs, _ = simulate(prm_loc, cfg['law'], q0, v0, h=0.05, tmax=40.0)
             Qs = Xs[:,:2]
             ax.plot(Qs[:,0], Qs[:,1], '-', lw=2)
             ax.plot(q0[0], q0[1], 'ko', ms=3)
@@ -416,7 +447,7 @@ def figB_trajectories(prm: Params, save_as):
         scaling = 2
         ax.set_xlim([XMIN*scaling,XMAX*scaling]); ax.set_ylim([YMIN*scaling,YMAX*scaling]); ax.set_aspect('equal'); ax.grid(True, alpha=0.3)
 
-    plt.tight_layout(); 
+    plt.tight_layout(pad=0.4, w_pad=0.5, h_pad=1.0); 
     if SAVE:
         plt.savefig(save_as, dpi=180); plt.close(fig)
     else:
@@ -609,6 +640,10 @@ def main(optimise=True, optimise2=True, filename=None):
     obs = Obstacle(c=np.array([0.0, 0.0]), r=0.5)
     base = Params(qg=np.array([1.2, 1.0]), obs=obs, m0=1.0, alpha=1.2, eps=0.05, p=2.0, c_damp=1.2, kB=1.0, k_psi=1.0)
 
+    starts = generate_initial_positions(base, num=5, plot=False)
+    print("starts: ", starts)
+
+
     if optimise:
         alpha = [0.8,1.2,1.6]
         p = [1.5,2.0,2.5]
@@ -620,8 +655,8 @@ def main(optimise=True, optimise2=True, filename=None):
         h = 0.05 # step size simulate
     
     
-        starts = [np.array([-1.6,-1.4]), np.array([-1.4,0.6]),
-                np.array([ 0.6,-1.5]), np.array([-1.0,1.6])]
+        # starts = [np.array([-1.6,-1.4]), np.array([-1.4,0.6]),
+        #         np.array([ 0.6,-1.5]), np.array([-1.0,1.6])]
         
         tuples = list(generate_param_tuples(alpha, p, eps, kB,
                                             grid=grid, random_n=rdm))
@@ -668,14 +703,14 @@ def main(optimise=True, optimise2=True, filename=None):
         P_LIST = [1.5, 2.0, 2.5]    # decay exponents for b(d)=k d^p (or TAN)
         ETA    = [0.02, 0.05, 0.10] # fraction of conservative safe k
 
-        starts = [
-            np.array([-1.6, -1.4]), np.array([-1.4, 0.6]),
-            np.array([ 0.6, -1.5]), np.array([-1.0, 1.6])
-        ]
+        # starts = [
+        #     np.array([-1.6, -1.4]), np.array([-1.4, 0.6]),
+        #     np.array([ 0.6, -1.5]), np.array([-1.0, 1.6])
+        # ]
 
         rows = []
         for i, (L, p, eta) in enumerate(itertools.product(LAMBDA, P_LIST, ETA)):
-            print(f"{i}/{len(itertools.product(LAMBDA, P_LIST, ETA))} lambda: {L} | p: {p} | eta: {eta}")
+            print(f"{i}/{len(LAMBDA)*len(P_LIST)*len(ETA)} lambda: {L} | p: {p} | eta: {eta}")
             # Map (L, eps, d_star) to alpha
             alpha = (L - 1.0) * m0 * (d_star**2 + eps**2)
 
@@ -730,7 +765,7 @@ def main(optimise=True, optimise2=True, filename=None):
         prm_best = base
 
     figA_invariance(prm_best, 'figs/figA_invariance_rings_SO.png')
-    figB_trajectories(prm_best,'figs/figB_trajectories_modes_SO.png')
+    figB_trajectories(prm_best,'figs/figB_trajectories_modes_SO.png', q0=starts)
     figC_ring_accels(prm_best,'figs/figC_ring_accels_SO.png')
     figD_curvature_maps(prm_best,'figs/figD_curvature_dp_SO.png')
     figF_kmax_safe(prm_best,'figs/figF_kmax_safe_SO.png')
@@ -738,4 +773,6 @@ def main(optimise=True, optimise2=True, filename=None):
 
 if __name__ == "__main__":
     # main(optimise=False, optimise2=False, filename="best_config.json")
-    main(optimise=False, optimise2=False, filename="best_config_Lambda.json")
+    # main(optimise=False, optimise2=False, filename="best_config_Lambda.json")
+    # main(optimise=True)
+    main(optimise=False, optimise2=True)
