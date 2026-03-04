@@ -24,9 +24,11 @@ import os, numpy as np
 import sys, json, csv, itertools, random
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
+from matplotlib.colors import TwoSlopeNorm
 from dataclasses import dataclass
 
 SAVE = False # Save or show figures
+SECTOR_ONLY = True # for grazing analysis (fig A/C) only use the semicircle furthest from the goal
 
 os.makedirs('figs', exist_ok=True)
 J = np.array([[0.0, -1.0],[1.0,  0.0]])
@@ -134,11 +136,19 @@ def b_of_d_TAN(q, prm: Params):
     gt, gn, n, t, d = gnat_components(q, prm)
     return prm.kB*(max(d,1e-6)**prm.p)*abs(gn)*phi_window(d)
 
-def N_of_q(q, prm: Params, law: str):
+def b_scalar_of_q(q, prm: Params, law: str):
+    """
+    Return the scalar magnitude b_eff(q) such that N(q)=b_eff(q)*J (for 'tan' this includes |g_n^nat|).
+    """
     if law == 'tan':
-        return b_of_d_TAN(q, prm)*J
-    d,_,_ = dist_n_t(q, prm.obs)
-    return b_of_d(d, prm, law)*J
+        return b_of_d_TAN(q, prm)
+    else:
+        d, _, _ = dist_n_t(q, prm.obs)
+        return b_of_d(d, prm, law)
+
+
+def N_of_q(q, prm: Params, law: str):
+    return b_scalar_of_q(q, prm, law) * J
 
 def grad_psi(q, prm: Params):
     return prm.k_psi*(q - prm.qg)
@@ -227,6 +237,12 @@ def trajectory_metrics(prm: Params, law: str, starts, h=1e-3, tmax=20.0, tol=1e-
 
 
 # Boundary compliance at grazing (2nd-order A-figure metric) 
+
+# --- helper: is angle in goal-opposing semicircle? ---
+def in_goal_opposing_sector(q, prm):
+    return (q - prm.obs.c) @ (prm.qg - prm.obs.c) < 0  # furthest from goal
+
+
 # # boundary test: at ring distance d, grazing (n·v=0), check n·a>=0 for several v_t magnitudes
 def boundary_compliance(prm: Params, law: str, Ds=None, vt_list=None):
     Ds = np.geomspace(0.01, 0.35, 16) if Ds is None else Ds
@@ -238,6 +254,8 @@ def boundary_compliance(prm: Params, law: str, Ds=None, vt_list=None):
         ok=0; tot=0
         for th in thetas:
             q = prm.obs.c + (prm.obs.r + d)*np.array([np.cos(th), np.sin(th)])
+            if SECTOR_ONLY and not in_goal_opposing_sector(q, prm):
+                continue
             dd, n, t = dist_n_t(q, prm.obs)
             for vt in vt_list:
                 v = vt*t
@@ -364,6 +382,8 @@ def figA_invariance(prm: Params, save_as):
             ok=0; tot=0; mins=[]
             for th in thetas:
                 q = prm.obs.c + (prm.obs.r + d)*np.array([np.cos(th), np.sin(th)])
+                if SECTOR_ONLY and not in_goal_opposing_sector(q, prm):
+                    continue
                 dd, n, t = dist_n_t(q, prm.obs)
                 for vt in vt_list:
                     v = vt*t  # grazing
@@ -511,83 +531,138 @@ def figC_ring_accels(prm: Params, save_as):
 # -----------------------------
 # FIG D: Curvature maps |κ| for full vs TAN, using grazing speed
 # -----------------------------
-def figD_curvature_maps(prm: Params, save_as):
-    print("Figure D")
-    def kappa_max_over_vt(q, prm_loc, law, vts=(0.3, 0.6, 0.9)):
-        d, n, t = dist_n_t(q, prm_loc.obs)
-        if d <= 0: return np.nan
-        vals = []
-        for vt in vts:
-            v = vt*t
-            a = rhs_second_order(np.hstack([q, v]), prm_loc, law)[2:]
-            sp = np.linalg.norm(v)
-            if sp < 1e-8: vals.append(0.0)
-            else:
-                cross = v[0]*a[1]-v[1]*a[0]
-                vals.append(abs(cross)/(sp**3))
-        return max(vals)
+def curvature_parts_at_q(q, prm, law, vts=(0.3, 0.6, 0.9), eps_b=1e-9, eps_g=1e-9, eps_c=1e-12):
+    """
+    Return RMS over vts of (kappa_tot, kappa_B, kappa_geom, kappa_goal, kappa_damp)
+    at point q, using grazing directions v = vt * t(q) and its normalized counterparts.
+    """
+    d, n, t = dist_n_t(q, prm.obs)
+    if d <= 0:
+        return (np.nan,)*9
+    s = s_of_d(d, prm.eps)
+    mn = prm.m0 + prm.alpha*s
 
+    raw_tot = []; raw_B = []; raw_geom = []; raw_goal = []; raw_damp = []
+    Bnorm = []; GEnorm = []; GLnorm = []; Dnorm = []
+
+    for vt in vts:
+        v = vt * t
+        M = M_of_q(q, prm); Minv = np.linalg.inv(M)
+        N = N_of_q(q, prm, law)
+        Cv = C_times_qdot(q, v, prm)
+        g = grad_psi(q, prm)
+        
+        a_B     =  Minv @ (N @ v)
+        a_geom  = - Minv @ (Cv)
+        a_goal  = - Minv @ (g)
+        a_damp  = - prm.c_damp * v
+
+        a_tot   = a_B + a_geom + a_goal + a_damp
+
+        sp = np.linalg.norm(v)
+        if sp < 1e-8:
+            kapp = lambda a: 0.0
+        else:
+            kapp = lambda a: (v[0]*a[1]-v[1]*a[0])/(sp**3)
+
+        kB = kapp(a_B); kGm = kapp(a_geom)
+        kGl = kapp(a_goal); kDp = kapp(a_damp); kT = kapp(a_tot)
+
+        raw_tot.append(kT); raw_B.append(kB); raw_geom.append(kGm); raw_goal.append(kGl); raw_damp.append(kDp)
+
+        # Component-normalized fields
+        b_eff = b_scalar_of_q(q, prm, law)
+        Bnorm.append(kB * (mn * max(vt, 1e-6)) / (abs(b_eff) + eps_b)) # remove b_eff/(|v|*mn)
+        Cv_norm = np.linalg.norm(Cv)
+        GEnorm.append(kGm * (mn * vt*vt) / (Cv_norm + eps_c)) # remove |Cv| /(mn*|v|^2)
+        g_norm = np.linalg.norm(g)
+        GLnorm.append(kGl * (mn * vt*vt) / (g_norm + eps_g)) # remove |grad psi|/(mn* |v|^2)
+
+        Dnorm.append(kDp) # no norm, as it is irrelevant
+
+    # RMS over tested vt
+    def rms(x): 
+        arr = np.array(x, dtype=float)
+        return float(np.sqrt(np.mean(arr**2))) * np.sign(np.mean(arr)) if len(arr) else np.nan
+
+    return (rms(raw_tot), rms(raw_B), rms(raw_geom), rms(raw_goal), rms(raw_damp), rms(Bnorm), rms(GEnorm), rms(GLnorm), rms(Dnorm))
+
+
+
+
+def figD_curvature_maps(prm: Params, save_as=None, law='dp', vts=(0.3, 0.6, 0.9), norm=True, trajectories=False, q0=None):
+    print("Figure D")
+    prm.kB = 150
     Nx, Ny = 90, 90
     xs = np.linspace(XMIN, XMAX, Nx); ys = np.linspace(YMIN, YMAX, Ny)
     XX, YY = np.meshgrid(xs, ys)
-    prm_full = Params(**prm.__dict__)
-    prm_tan  = Params(**prm.__dict__)
-    prm_const = Params(**prm.__dict__)
 
-    K_full = np.full_like(XX, np.nan, dtype=float)
-    K_tan  = np.full_like(XX, np.nan, dtype=float)
-    K_const = np.full_like(XX, np.nan, dtype=float)
-
+    K_tot  = np.full_like(XX, np.nan, dtype=float)
+    K_B    = np.full_like(XX, np.nan, dtype=float)
+    K_geom = np.full_like(XX, np.nan, dtype=float)
+    K_goal = np.full_like(XX, np.nan, dtype=float)
+    K_damp = np.full_like(XX, np.nan, dtype=float)
+    K_norm = np.full_like(XX, np.nan, dtype=float)
+    
     for i in range(Nx):
         for j in range(Ny):
             q = np.array([XX[j,i], YY[j,i]])
-            K_full[j,i] = kappa_max_over_vt(q, prm_full, 'dp')
-            K_tan[j,i]  = kappa_max_over_vt(q, prm_tan,  'tan')
-            K_const[j,i]  = kappa_max_over_vt(q, prm_const,  'const')
+            (kt,kb,kgm,kgl,kdp, kbn,kgmn,kgln,kdpn) = curvature_parts_at_q(q, prm, law, vts=vts)
+            K_tot[j,i], K_B[j,i], K_geom[j,i], K_goal[j,i], K_damp[j,i] = (kt, kb, kgm, kgl, kdp) if (not norm) else (kt, kbn, kgmn, kgln, kdpn)
 
+            # Normalized total
+            d, n, t = dist_n_t(q, prm.obs)
+            if d <= 0:
+                K_norm[j, i] = np.nan
+                continue
+            # normalized total curvature: multiply by m_n / (d^p+ delta)
+            s = s_of_d(d, prm.eps)
+            mn = prm.m0 + prm.alpha*s
+            K_norm[j,i] = K_tot[j, i] * mn / ((max(d, 1e-6)**prm.p) + 1e-6)
+
+    # common vmax based on percentiles of all fields (robust)
+    stack = np.vstack([K_tot.ravel(), K_B.ravel(),
+                       K_geom.ravel(), K_goal.ravel(), K_damp.ravel(), K_norm.ravel()])
+    vmax = np.nanpercentile(stack, 99, axis=1)
+    vmax = [max(v, 1e-4) for v in vmax]
+    vmin = np.nanmin(stack, axis=1)
+    vmin = [min(v, -1e-4) for v in vmin]
     
-    vmax = np.nanpercentile(np.hstack([np.abs(K_full).ravel(), np.abs(K_tan).ravel()]), 99)
-    vmax = max(vmax, 1e-3)
+    fig, axes = plt.subplots(3, 2, figsize=(12,15))
+    titles = [r'$|\kappa|_{\rm tot}$', r'$|\kappa|_{B}$', r'$|\kappa|_{\rm geom}$', r'$|\kappa|_{\rm goal}$', r'$|\kappa|_{\rm damp}$', r'$|\kappa|_{\rm norm}$']
+    mats   = [K_tot, K_B, K_geom, K_goal, K_damp, K_norm]
 
-    fig, axes = plt.subplots(1,3, figsize=(17,5))
-    im0 = axes[0].imshow(np.abs(K_full), origin='lower', extent=[XMIN,XMAX,YMIN,YMAX],
-                         cmap='magma', vmin=0, vmax=vmax)
-    axes[0].add_patch(Circle(prm.obs.c, prm.obs.r, color='w', alpha=0.6))
-    axes[0].plot(prm.qg[0], prm.qg[1], 'c*', ms=12)
-    axes[0].set_title('|κ|: metric + mag (b~d^p, full)'); axes[0].set_aspect('equal')
+    if trajectories:
+        if q0 is None:
+            starts = generate_initial_positions(prm)
+        else:
+            starts = q0
+        starts = np.append(starts,[0.45, 0.45]).reshape(starts.shape[0] + 1, 2)
+        print("st = ", starts)
+        Qs_all = []
+        for i, q0 in enumerate(starts):
+            print(f"{i+1} / {len(starts)}: q0 = {q0}")
+            d, n, t = dist_n_t(q0, prm.obs)
+            v0 = 0.10*t
+            _, Xs, _ = simulate(prm, law, q0, v0, h=0.05, tmax=40.0)
+            Qs = Xs[:,:2]
+            Qs_all.append(Qs)
 
-    im1 = axes[1].imshow(np.abs(K_tan), origin='lower', extent=[XMIN,XMAX,YMIN,YMAX],
-                         cmap='magma', vmin=0, vmax=vmax)
-    axes[1].add_patch(Circle(prm.obs.c, prm.obs.r, color='w', alpha=0.6))
-    axes[1].plot(prm.qg[0], prm.qg[1], 'c*', ms=12)
-    axes[1].set_title('|κ|: metric + mag TAN (b~d^p · |g_n^nat|)'); axes[1].set_aspect('equal')
+    for ax, T, M, vma, vmi in zip(axes.flatten(), titles, mats, vmax, vmin):
+        norm = TwoSlopeNorm(vcenter=0.0, vmin=vmi, vmax=vma)
+        im = ax.imshow(M, origin='lower', extent=[XMIN, XMAX, YMIN, YMAX], cmap='RdBu_r', norm=norm)
+        ax.add_patch(Circle(prm.obs.c, prm.obs.r, facecolor='w', alpha=0.6, edgecolor='k', linewidth=1))
+        if trajectories:
+            for q0, Qs in zip(starts, Qs_all):
+                ax.plot(Qs[:, 0], Qs[:, 1], '-', lw=2)
+                ax.plot(q0[0],q0[1], 'ko', ms=3)
+        ax.plot(prm.qg[0], prm.qg[1], 'c*', ms=10)
+        ax.set_aspect('equal'); ax.set_title(T)
 
-    # Contrast vs const (full - const)
-    diff = np.clip(np.abs(K_full) - np.abs(K_const), 
-    a_min=-np.inf, a_max=np.inf)
-    def d_of_q(q, obs): return np.linalg.norm(q - obs.c) - obs.r
-
-    W = np.ones_like(K_full)
-    for i in range(K_full.shape[1]):
-        for j in range(K_full.shape[0]):
-            q = np.array([XX[j,i], YY[j,i]])
-            d = d_of_q(q, prm.obs)
-            W[j,i] = np.exp(-(max(d,0.0)/0.35)**2)  # near-field emphasis
-
-    diff_near = (np.abs(K_const) - np.abs(K_full)) * W  # positive=improvement near obstacle
-
-    vmax2 = np.nanpercentile(np.abs(diff).ravel(), 99)
-    # vmax2 = np.nanpercentile(np.abs(diff_near).ravel(), 99)
-    vmax2 = max(vmax2, 1e-4)
-    im2 = axes[2].imshow(diff, origin='lower', extent=[XMIN,XMAX,YMIN,YMAX],
-                         cmap='coolwarm', vmin=-vmax2, vmax=vmax2)
-    axes[2].add_patch(Circle(prm.obs.c, prm.obs.r, color='w', alpha=0.6))
-    axes[2].plot(prm.qg[0], prm.qg[1], 'k*', ms=12)
-    axes[2].set_title('Contrast: |κ|(d^p full) - |κ|(const)')
-    axes[2].set_aspect('equal')
-
-    plt.tight_layout(); 
+    plt.tight_layout(pad=0.4, w_pad=0.5, h_pad=1.0)
     if SAVE:
+        if save_as is None:
+            save_as = f'figs/figD_curvature_attribution_SO_{law}.png'
         plt.savefig(save_as, dpi=180); plt.close(fig)
     else:
         plt.show()
@@ -764,15 +839,15 @@ def main(optimise=True, optimise2=True, filename=None):
     else:
         prm_best = base
 
-    figA_invariance(prm_best, 'figs/figA_invariance_rings_SO.png')
-    figB_trajectories(prm_best,'figs/figB_trajectories_modes_SO.png', q0=starts)
-    figC_ring_accels(prm_best,'figs/figC_ring_accels_SO.png')
-    figD_curvature_maps(prm_best,'figs/figD_curvature_dp_SO.png')
-    figF_kmax_safe(prm_best,'figs/figF_kmax_safe_SO.png')
+    # figA_invariance(prm_best, 'figs/figA_invariance_rings_SO.png')
+    # figB_trajectories(prm_best,'figs/figB_trajectories_modes_SO.png', q0=starts)
+    # figC_ring_accels(prm_best,'figs/figC_ring_accels_SO.png')
+    figD_curvature_maps(prm_best, norm=False, vts=(0.6,), trajectories=True)
+    # figF_kmax_safe(prm_best,'figs/figF_kmax_safe_SO.png')
     print('Generated second-order figures: A, B, C, D, F')
 
 if __name__ == "__main__":
-    # main(optimise=False, optimise2=False, filename="best_config.json")
+    main(optimise=False, optimise2=False, filename="best_config.json")
     # main(optimise=False, optimise2=False, filename="best_config_Lambda.json")
     # main(optimise=True)
-    main(optimise=False, optimise2=True)
+    # main(optimise=False, optimise2=True)
