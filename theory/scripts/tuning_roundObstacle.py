@@ -122,6 +122,35 @@ def phi_window(d, d_on=0.35, q=2.0):
     # Gaussian-like window ~1 near obstacle, decays after d_on
     return np.exp(-(max(d,0.0)/d_on)**q)
 
+# smooth radial switch S(d) : 0 near obstacle, -> 1 after d_sw
+def smooth_switch(d, d_sw=0.06, w_sw=0.02):
+    x = (max(d, 0.0) - d_sw) / max(w_sw, 1e-6)
+    return 0.5*(1.0 + np.tanh(x))
+
+# Side sign relative to the obstacle-goal axis
+def side_sign(q, prm: Params):
+    e_g = prm.qg - prm.obs.c
+    if np.linalg.norm(e_g) < 1e-12:
+        return 1.0
+    e_g = e_g / np.linalg.norm(e_g)
+    qc = q - prm.obs.c
+    # sign of scalar 2-D cross product (z-comp)
+    s = qc[0]*e_g[1] - qc[1]*e_g[0]
+    return -1.0 if s >= 0.0 else 1.0
+
+# angle theta of q_c relative to the obstacle-goal axis eg
+def theta_rel_goal(q, prm: Params):
+    qc = q - prm.obs.c
+    r = np.linalg.norm(qc)
+    if r < 1e-12:
+        return 0.0
+    eg = prm.qg - prm.obs.c
+    eg = eg / max(np.linalg.norm(eg), 1e-12)
+    cos_th = (qc @ eg) / r
+    sin_th = (qc @ (J @ eg)) / r
+    return np.arctan2(sin_th, cos_th) # \in (-pi, pi]
+
+
 def b_of_d(d, prm: Params, law: str):
     dpos = max(d, 1e-6)
     if   law == 'none':     return 0.0
@@ -136,13 +165,33 @@ def b_of_d_TAN(q, prm: Params):
     gt, gn, n, t, d = gnat_components(q, prm)
     return prm.kB*(max(d,1e-6)**prm.p)*abs(gn)*phi_window(d)
 
+def b_of_d_signed(q, prm:Params, d_sw=0.06, w_sw=0.02, base_law='dp'):
+    d, _, _ = dist_n_t(q, prm.obs)
+    sLR = side_sign(q, prm) # +1 left of obstacle and goal axis, -1 is right of this axis
+    Srad = smooth_switch(d, d_sw, w_sw) # 0 near boundary, -> 1 after d_sw
+    base  = b_of_d(d, prm=prm, law=base_law)
+    return base * (1.0 + Srad*(sLR - 1.0))
+
+def b_of_d_sine(q, prm: Params, m=1, d_sw=0.06, w_sw=0.02, base_law='dp'):
+    d, _, _ = dist_n_t(q, prm.obs)
+    base = b_of_d(d, prm=prm, law=base_law)
+    S = smooth_switch(d, d_sw, w_sw) # 0 near boundary, -> 1 after d_sw
+    th = theta_rel_goal(q, prm)
+    mod = np.sin(m * th) # m = 1: single flip per loop around obstacle
+    return base * ((1.0 - S) * 1.0 + S * mod)
+
 def b_scalar_of_q(q, prm: Params, law: str):
     """
     Return the scalar magnitude b_eff(q) such that N(q)=b_eff(q)*J (for 'tan' this includes |g_n^nat|).
     """
     if law == 'tan':
         return b_of_d_TAN(q, prm)
+    elif law == 'dpsigned':
+        return b_of_d_signed(q, prm)
+    elif law == 'dpsine':
+        return b_of_d_sine(q, prm)
     else:
+        # 'none', 'const', 'dpminus1', 'dp'
         d, _, _ = dist_n_t(q, prm.obs)
         return b_of_d(d, prm, law)
 
@@ -592,7 +641,9 @@ def curvature_parts_at_q(q, prm, law, vts=(0.3, 0.6, 0.9), eps_b=1e-9, eps_g=1e-
 
 def figD_curvature_maps(prm: Params, save_as=None, law='dp', vts=(0.3, 0.6, 0.9), norm=True, trajectories=False, q0=None):
     print("Figure D")
-    prm.kB = 150
+    prm.kB = 100
+    prm.eps = 0.0001
+    prm.alpha = 1.0
     Nx, Ny = 90, 90
     xs = np.linspace(XMIN, XMAX, Nx); ys = np.linspace(YMIN, YMAX, Ny)
     XX, YY = np.meshgrid(xs, ys)
@@ -842,7 +893,7 @@ def main(optimise=True, optimise2=True, filename=None):
     # figA_invariance(prm_best, 'figs/figA_invariance_rings_SO.png')
     # figB_trajectories(prm_best,'figs/figB_trajectories_modes_SO.png', q0=starts)
     # figC_ring_accels(prm_best,'figs/figC_ring_accels_SO.png')
-    figD_curvature_maps(prm_best, norm=False, vts=(0.6,), trajectories=True)
+    figD_curvature_maps(prm_best, norm=False, vts=(0.6,), trajectories=True, law='dpsine')#'dpsigned')
     # figF_kmax_safe(prm_best,'figs/figF_kmax_safe_SO.png')
     print('Generated second-order figures: A, B, C, D, F')
 
