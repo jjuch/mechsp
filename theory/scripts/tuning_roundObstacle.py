@@ -122,10 +122,42 @@ def phi_window(d, d_on=0.35, q=2.0):
     # Gaussian-like window ~1 near obstacle, decays after d_on
     return np.exp(-(max(d,0.0)/d_on)**q)
 
+def phi_annulus(d, d_star=0.08, sigma_d=0.025):
+    # Annular Gaussian centered at a disered working radius d_stat with width sigma_d
+    return np.exp(-((max(d, 0.0) - d_star)**2) / (2.0*sigma_d**2))
+
 # smooth radial switch S(d) : 0 near obstacle, -> 1 after d_sw
 def smooth_switch(d, d_sw=0.06, w_sw=0.02):
     x = (max(d, 0.0) - d_sw) / max(w_sw, 1e-6)
     return 0.5*(1.0 + np.tanh(x))
+
+def w_opp(theta, gamma=2.0):
+    # smooth angular window that kills the donut on the goal side. theta is measured from the obstacle -  goal axis
+    return ((1.0 - np.cos(theta)) * 0.5)**gamma # 0 on goal axis, 1 opposite
+
+def w_ann_raised_cosine(r, r1, r2):
+    if r < r1 or r > r2: return 0.0
+    x = (r - r1) / max(r2 - r1, 1e-9)
+    return 0.5 * (1.0 - np.cos(np.pi*x)) # C1 at edges
+
+def w_ann_gaussian(r, r1, r2, sigma_frac=0.3):
+    rm = 0.5 * (r1 + r2)
+    sigma = sigma_frac * max(r2 - r1, 1e-9)
+    return np.exp(-((r - rm)**2) / (2.0 * sigma**2))
+
+# phase sweep 
+def phase_of_r_linear(r, r1, r2, phi_max):
+    rm = 0.5 * (r1 + r2)
+    s = (r - rm) / max(0.5*(r2 - r1), 1e-9) # s \in [-1, +1]
+    s = np.clip(s, -1.0, 1.0)
+    return phi_max * s
+
+def phase_of_r_tanh(r, r1, r2, phi_max, k=4.0):
+    rm = 0.5*(r1 + r2)
+    s = (r - rm) / max(0.5*(r2 - r1), 1e-9) # s \in [-1, +1]
+    s = np.clip(s, -1.0, 1.0)
+    return phi_max * np.tanh(k*s) / np.tanh(k)
+
 
 # Side sign relative to the obstacle-goal axis
 def side_sign(q, prm: Params):
@@ -180,6 +212,76 @@ def b_of_d_sine(q, prm: Params, m=1, d_sw=0.06, w_sw=0.02, base_law='dp'):
     mod = np.sin(m * th) # m = 1: single flip per loop around obstacle
     return base * ((1.0 - S) * 1.0 + S * mod)
 
+def b_of_d_sine_rphase(q, prm: Params,
+                       r1=None, r2=None,
+                       phi_max=np.pi/2,
+                       use_gauss=True, sigma_frac=0.35,
+                       use_tanh=True, k=4.0,
+                       use_side_filter=True):
+    # radii: if not give, place ring at fixed offsets from obstacle boundary
+    R = prm.obs.r
+    if r1 is None: r1 = R + 0.15      # inner radius (m)
+    if r2 is None: r2 = R + 0.75      # outer radius (m)
+
+    q_c = q - prm.obs.c
+    r   = np.linalg.norm(q_c)
+    d, _, _ = dist_n_t(q, prm.obs)
+    th  = theta_rel_goal(q, prm)
+    
+    # annular window
+    if use_gauss:
+        w_ann = w_ann_gaussian(r, r1, r2, sigma_frac=sigma_frac)
+    else:
+        w_ann = w_ann_raised_cosine(r, r1, r2)
+    
+    w_ann = np.ones_like(w_ann)
+
+    # radial phase
+    if use_tanh:
+        phi_r = phase_of_r_tanh(r, r1, r2, phi_max, k=k)
+    else:
+        phi_r = phase_of_r_linear(r, r1, r2, phi_max)
+
+    if use_side_filter:
+        w_side = w_opp(th)
+    else:
+        w_side = 1.0
+
+
+    # assemble amplitude; keep your far-field window φ(d) if you like
+    base = prm.kB * (max(d,1e-6)**prm.p) * w_ann * phi_window(d)
+    b = base * np.sin(th + phi_r) * w_side
+
+    return b
+
+
+
+def b_of_d_sine2(q, prm: Params,
+                 d_sw=0.06, w_sw=0.02, # near-field safety switch
+                 d_star=0.08, sigma_d=0.025, # donut center and width
+                 phi_max=np.pi/3, eps0=0.15, base_law='dp', # phase sweep and baseline
+                 gamma_opp=2.0, eta=0.08
+                 ):
+    d, _, _ = dist_n_t(q, prm.obs)
+    th = theta_rel_goal(q, prm)
+    S = smooth_switch(d, d_sw, w_sw)
+    phi_full = phi_annulus(d, d_star, sigma_d) * phi_window(d)
+    beta0 = (1.0 - S) * eps0
+    # sine with phase sweep outward:
+    phase = phi_max * S
+    beta1 = S
+    raw = (beta0 + beta1 * np.sin(th + phase)) * w_opp(th, gamma=gamma_opp)
+    return prm.kB * (max(d, 1e-6)**prm.p) * phi_full * raw
+
+def b_of_d_twoshell(q, prm: Params, d1=0.06, s1=0.02, d2=0.10, s2=0.02, phase_shift=np.pi/4, gamma_opp=2.0):
+    d, _, _ = dist_n_t(q, prm.obs)
+    th = theta_rel_goal(q, prm)
+    phi1 = phi_annulus(d, d_star=d1, sigma_d=s1)
+    phi2 = phi_annulus(d, d_star=d2, sigma_d=s2)
+    raw = (phi1 * np.sin(th ) + phi2 * np.sin(th + np.pi/2.0)) * w_opp(th, gamma=gamma_opp)
+    return prm.kB * (max(d, 1e-6)**prm.p) * phi_window(d) * raw
+
+
 def b_scalar_of_q(q, prm: Params, law: str):
     """
     Return the scalar magnitude b_eff(q) such that N(q)=b_eff(q)*J (for 'tan' this includes |g_n^nat|).
@@ -190,6 +292,12 @@ def b_scalar_of_q(q, prm: Params, law: str):
         return b_of_d_signed(q, prm)
     elif law == 'dpsine':
         return b_of_d_sine(q, prm)
+    elif law == 'dpsine2':
+        return b_of_d_sine2(q, prm)
+    elif law == 'dptwoshell':
+        return b_of_d_twoshell(q, prm)
+    elif law == 'dpsine_rphase':
+        return b_of_d_sine_rphase(q, prm, use_tanh=False)
     else:
         # 'none', 'const', 'dpminus1', 'dp'
         d, _, _ = dist_n_t(q, prm.obs)
@@ -420,6 +528,7 @@ def figA_invariance(prm: Params, save_as):
         'metric+mag d^{p-1}':    {'alpha':prm.alpha, 'law':'dpminus1'},
         'metric+mag d^{p}':      {'alpha':prm.alpha, 'law':'dp'},
         'metric+mag TAN d^{p}':  {'alpha':prm.alpha, 'law':'tan'},
+        'metric+mag sine':       {'alpha':prm.alpha, 'law':'dpsine'},
     }
     frac = {k: [] for k in modes}
     min_na = {k: [] for k in modes}
@@ -478,6 +587,7 @@ def figB_trajectories(prm: Params, save_as, q0=None):
         ('metric+mag d^{p-1}',   {'alpha':prm.alpha,  'law':'dpminus1'}),
         ('metric+mag d^{p}',     {'alpha':prm.alpha,  'law':'dp'}),
         ('metric+mag TAN d^{p}', {'alpha':prm.alpha,  'law':'tan'}),
+        ('metric+mag sine',      {'alpha':prm.alpha, 'law':'dpsine'}),
     ]
     if q0 is None:
         starts = generate_initial_positions(prm)
@@ -538,6 +648,7 @@ def figC_ring_accels(prm: Params, save_as):
         'metric+mag d^{p-1}':    {'alpha':prm.alpha, 'law':'dpminus1'},
         'metric+mag d^{p}':      {'alpha':prm.alpha, 'law':'dp'},
         'metric+mag TAN d^{p}':  {'alpha':prm.alpha, 'law':'tan'},
+        'metric+mag sine':       {'alpha':prm.alpha, 'law':'dpsine'},
     }
     avg_na = {k: [] for k in modes}
     avg_ta = {k: [] for k in modes}
@@ -641,9 +752,9 @@ def curvature_parts_at_q(q, prm, law, vts=(0.3, 0.6, 0.9), eps_b=1e-9, eps_g=1e-
 
 def figD_curvature_maps(prm: Params, save_as=None, law='dp', vts=(0.3, 0.6, 0.9), norm=True, trajectories=False, q0=None):
     print("Figure D")
-    prm.kB = 100
-    prm.eps = 0.0001
-    prm.alpha = 1.0
+    # prm.kB = 100
+    # prm.eps = 0.0001
+    # prm.alpha = 1.0
     Nx, Ny = 90, 90
     xs = np.linspace(XMIN, XMAX, Nx); ys = np.linspace(YMIN, YMAX, Ny)
     XX, YY = np.meshgrid(xs, ys)
@@ -654,12 +765,19 @@ def figD_curvature_maps(prm: Params, save_as=None, law='dp', vts=(0.3, 0.6, 0.9)
     K_goal = np.full_like(XX, np.nan, dtype=float)
     K_damp = np.full_like(XX, np.nan, dtype=float)
     K_norm = np.full_like(XX, np.nan, dtype=float)
+
+    phase = np.full_like(XX, np.nan, dtype=float)
     
     for i in range(Nx):
         for j in range(Ny):
             q = np.array([XX[j,i], YY[j,i]])
             (kt,kb,kgm,kgl,kdp, kbn,kgmn,kgln,kdpn) = curvature_parts_at_q(q, prm, law, vts=vts)
             K_tot[j,i], K_B[j,i], K_geom[j,i], K_goal[j,i], K_damp[j,i] = (kt, kb, kgm, kgl, kdp) if (not norm) else (kt, kbn, kgmn, kgln, kdpn)
+
+            # phase
+            theta = theta_rel_goal(q, prm)
+            phi_r = w_opp(theta)
+            phase[j, i] = phi_r
 
             # Normalized total
             d, n, t = dist_n_t(q, prm.obs)
@@ -672,6 +790,16 @@ def figD_curvature_maps(prm: Params, save_as=None, law='dp', vts=(0.3, 0.6, 0.9)
             K_norm[j,i] = K_tot[j, i] * mn / ((max(d, 1e-6)**prm.p) + 1e-6)
 
     # common vmax based on percentiles of all fields (robust)
+
+    # fig = plt.figure()
+    # ax = plt.axes()
+    # ax = fig.add_axes(ax)
+    # im = ax.imshow(phase, origin='lower', extent=[XMIN, XMAX, YMIN, YMAX], cmap='plasma', vmin=0.0, vmax=1.0)
+    # ax.add_patch(Circle(prm.obs.c, prm.obs.r, edgecolor='b', linewidth=2, fill=False))
+    # ax.set_aspect('equal')
+    # plt.show()
+    # exit()
+
     stack = np.vstack([K_tot.ravel(), K_B.ravel(),
                        K_geom.ravel(), K_goal.ravel(), K_damp.ravel(), K_norm.ravel()])
     vmax = np.nanpercentile(stack, 99, axis=1)
@@ -694,7 +822,7 @@ def figD_curvature_maps(prm: Params, save_as=None, law='dp', vts=(0.3, 0.6, 0.9)
         for i, q0 in enumerate(starts):
             print(f"{i+1} / {len(starts)}: q0 = {q0}")
             d, n, t = dist_n_t(q0, prm.obs)
-            v0 = 0.10*t
+            v0 = 0.05*t
             _, Xs, _ = simulate(prm, law, q0, v0, h=0.05, tmax=40.0)
             Qs = Xs[:,:2]
             Qs_all.append(Qs)
@@ -890,10 +1018,12 @@ def main(optimise=True, optimise2=True, filename=None):
     else:
         prm_best = base
 
+    prm_best.kB = 100
+
     # figA_invariance(prm_best, 'figs/figA_invariance_rings_SO.png')
     # figB_trajectories(prm_best,'figs/figB_trajectories_modes_SO.png', q0=starts)
     # figC_ring_accels(prm_best,'figs/figC_ring_accels_SO.png')
-    figD_curvature_maps(prm_best, norm=False, vts=(0.6,), trajectories=True, law='dpsine')#'dpsigned')
+    figD_curvature_maps(prm_best, norm=False, vts=(0.6,), trajectories=True, law='dpsine_rphase') # dpsigned /dpsine / dpsine2 / dptwoshell/dpsine_rphase
     # figF_kmax_safe(prm_best,'figs/figF_kmax_safe_SO.png')
     print('Generated second-order figures: A, B, C, D, F')
 
