@@ -183,19 +183,13 @@ def theta_rel_goal(q, prm: Params):
     return np.arctan2(sin_th, cos_th) # \in (-pi, pi]
 
 
-def b_of_d(d, prm: Params, law: str):
+def b_of_d(q, prm: Params, law: str):
+    d, _, _ = dist_n_t(q, prm.obs)
     dpos = max(d, 1e-6)
     if   law == 'none':     return 0.0
-    elif law == 'const':    return prm.kB
-    elif law == 'dpminus1': return prm.kB*(dpos**(prm.p-1.0)) * phi_window(dpos)
+    elif law == 'const':    return prm.kB * phi_window(dpos)
     elif law == 'dp':       return prm.kB*(dpos**(prm.p)) * phi_window(dpos)
     else: raise ValueError('unknown law')
-
-
-def b_of_d_TAN(q, prm: Params):
-    # TAN-scaled magnitude: k * d^p * |g_n^natural|
-    gt, gn, n, t, d = gnat_components(q, prm)
-    return prm.kB*(max(d,1e-6)**prm.p)*abs(gn)*phi_window(d)
 
 def b_of_d_signed(q, prm:Params, d_sw=0.06, w_sw=0.02, base_law='dp'):
     d, _, _ = dist_n_t(q, prm.obs)
@@ -215,8 +209,6 @@ def b_of_d_sine(q, prm: Params, m=1, d_sw=0.06, w_sw=0.02, base_law='dp'):
 def b_of_d_sine_rphase(q, prm: Params,
                        r1=None, r2=None,
                        phi_max=np.pi/2,
-                       use_gauss=True, sigma_frac=0.35,
-                       use_tanh=True, k=4.0,
                        use_side_filter=True):
     # radii: if not give, place ring at fixed offsets from obstacle boundary
     R = prm.obs.r
@@ -227,20 +219,9 @@ def b_of_d_sine_rphase(q, prm: Params,
     r   = np.linalg.norm(q_c)
     d, _, _ = dist_n_t(q, prm.obs)
     th  = theta_rel_goal(q, prm)
-    
-    # annular window
-    if use_gauss:
-        w_ann = w_ann_gaussian(r, r1, r2, sigma_frac=sigma_frac)
-    else:
-        w_ann = w_ann_raised_cosine(r, r1, r2)
-    
-    w_ann = np.ones_like(w_ann)
 
     # radial phase
-    if use_tanh:
-        phi_r = phase_of_r_tanh(r, r1, r2, phi_max, k=k)
-    else:
-        phi_r = phase_of_r_linear(r, r1, r2, phi_max)
+    phi_r = phase_of_r_linear(r, r1, r2, phi_max)
 
     if use_side_filter:
         w_side = w_opp(th)
@@ -249,53 +230,20 @@ def b_of_d_sine_rphase(q, prm: Params,
 
 
     # assemble amplitude; keep your far-field window φ(d) if you like
-    base = prm.kB * (max(d,1e-6)**prm.p) * w_ann * phi_window(d)
+    base = prm.kB * (max(d,1e-6)**prm.p) * phi_window(d)
     b = base * np.sin(th + phi_r) * w_side
 
     return b
 
 
-
-def b_of_d_sine2(q, prm: Params,
-                 d_sw=0.06, w_sw=0.02, # near-field safety switch
-                 d_star=0.08, sigma_d=0.025, # donut center and width
-                 phi_max=np.pi/3, eps0=0.15, base_law='dp', # phase sweep and baseline
-                 gamma_opp=2.0, eta=0.08
-                 ):
-    d, _, _ = dist_n_t(q, prm.obs)
-    th = theta_rel_goal(q, prm)
-    S = smooth_switch(d, d_sw, w_sw)
-    phi_full = phi_annulus(d, d_star, sigma_d) * phi_window(d)
-    beta0 = (1.0 - S) * eps0
-    # sine with phase sweep outward:
-    phase = phi_max * S
-    beta1 = S
-    raw = (beta0 + beta1 * np.sin(th + phase)) * w_opp(th, gamma=gamma_opp)
-    return prm.kB * (max(d, 1e-6)**prm.p) * phi_full * raw
-
-def b_of_d_twoshell(q, prm: Params, d1=0.06, s1=0.02, d2=0.10, s2=0.02, phase_shift=np.pi/4, gamma_opp=2.0):
-    d, _, _ = dist_n_t(q, prm.obs)
-    th = theta_rel_goal(q, prm)
-    phi1 = phi_annulus(d, d_star=d1, sigma_d=s1)
-    phi2 = phi_annulus(d, d_star=d2, sigma_d=s2)
-    raw = (phi1 * np.sin(th ) + phi2 * np.sin(th + np.pi/2.0)) * w_opp(th, gamma=gamma_opp)
-    return prm.kB * (max(d, 1e-6)**prm.p) * phi_window(d) * raw
-
-
 def b_scalar_of_q(q, prm: Params, law: str):
     """
-    Return the scalar magnitude b_eff(q) such that N(q)=b_eff(q)*J (for 'tan' this includes |g_n^nat|).
+    Return the scalar magnitude b_eff(q) such that N(q)=b_eff(q)*J.
     """
-    if law == 'tan':
-        return b_of_d_TAN(q, prm)
-    elif law == 'dpsigned':
-        return b_of_d_signed(q, prm)
+    if law == 'dp':
+        return b_of_d(q, prm, law)
     elif law == 'dpsine':
         return b_of_d_sine(q, prm)
-    elif law == 'dpsine2':
-        return b_of_d_sine2(q, prm)
-    elif law == 'dptwoshell':
-        return b_of_d_twoshell(q, prm)
     elif law == 'dpsine_rphase':
         return b_of_d_sine_rphase(q, prm, use_tanh=False)
     else:
@@ -584,10 +532,9 @@ def figB_trajectories(prm: Params, save_as, q0=None):
         ('no metric & no mag',   {'alpha':0.0,        'law':'none'}),
         ('metric only',          {'alpha':prm.alpha,  'law':'none'}),
         ('metric+mag const',     {'alpha':prm.alpha,  'law':'const'}),
-        ('metric+mag d^{p-1}',   {'alpha':prm.alpha,  'law':'dpminus1'}),
         ('metric+mag d^{p}',     {'alpha':prm.alpha,  'law':'dp'}),
-        ('metric+mag TAN d^{p}', {'alpha':prm.alpha,  'law':'tan'}),
         ('metric+mag sine',      {'alpha':prm.alpha, 'law':'dpsine'}),
+        ('metric+mag phase sine',      {'alpha':prm.alpha, 'law':'dpsine_rphase'}),
     ]
     if q0 is None:
         starts = generate_initial_positions(prm)
@@ -645,10 +592,9 @@ def figC_ring_accels(prm: Params, save_as):
         'no metric & no mag':    {'alpha':0.0, 'law':'none'},
         'metric only':           {'alpha':prm.alpha, 'law':'none'},
         'metric+mag const':      {'alpha':prm.alpha, 'law':'const'},
-        'metric+mag d^{p-1}':    {'alpha':prm.alpha, 'law':'dpminus1'},
         'metric+mag d^{p}':      {'alpha':prm.alpha, 'law':'dp'},
-        'metric+mag TAN d^{p}':  {'alpha':prm.alpha, 'law':'tan'},
         'metric+mag sine':       {'alpha':prm.alpha, 'law':'dpsine'},
+        'metric+mag phase sine': {'alpha':prm.alpha, 'law':'dpsine_rphase'},
     }
     avg_na = {k: [] for k in modes}
     avg_ta = {k: [] for k in modes}
@@ -921,8 +867,8 @@ def main(optimise=True, optimise2=True, filename=None):
             prm = Params(**{**base.__dict__, 'alpha':a, 'p':p, 'eps':e, 'kB':k})
             # Evaluate two modes for metrics: metric-only vs metric+mag d^p (final)
             met  = trajectory_metrics(prm, 'none', starts, h=h, tmax=tmax)
-            full = trajectory_metrics(prm, 'dp',   starts, h=h, tmax=tmax)
-            bcomp= boundary_compliance(prm, 'dp')
+            full = trajectory_metrics(prm, 'dpsine_rphase',   starts, h=h, tmax=tmax)
+            bcomp= boundary_compliance(prm, 'dpsine_rphase')
 
             rows.append({
                 'alpha':a,'p':p,'eps':e,'kB':k,'c_damp':base.c_damp,
@@ -981,8 +927,8 @@ def main(optimise=True, optimise2=True, filename=None):
 
             # Evaluate metrics with and without magnet
             met  = trajectory_metrics(prm_tmp, 'none', starts, h=0.05, tmax=20.0)
-            full = trajectory_metrics(prm_tmp, 'dp',   starts, h=0.05, tmax=20.0)
-            bcomp= boundary_compliance(prm_tmp, 'dp')
+            full = trajectory_metrics(prm_tmp, 'dpsine_rphase',   starts, h=0.05, tmax=20.0)
+            bcomp= boundary_compliance(prm_tmp, 'dpsine_rphase')
 
             rows.append({
                 'Lambda':L, 'p':p, 'eta':eta, 'alpha':alpha,
