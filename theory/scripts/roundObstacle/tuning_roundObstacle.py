@@ -24,7 +24,7 @@ from matplotlib.patches import Circle
 from typing import List, Tuple
 from navigate_roundObstacle import (
     Params, Obstacle, SecondOrderSystem,
-    NoMagnetic, ConstMagnetic, PowerMagnetic, SineMagnetic, SineRPhaseMagnetic,
+    NoMagnetic, ConstMagnetic, PowerMagnetic, SineMagnetic, SineRPhaseMagnetic, TiltedSineMagnetic,
     dist_n_t, boundary_compliance, _initial_positions_aligned_with_goal
 )
 
@@ -46,7 +46,9 @@ def make_default_params() -> Params:
         p=2.0,
         c_damp=0.60,
         kB=100.0,
-        k_psi=1.0
+        k_psi=1.0,
+        d_far=0.35,
+        q_far=2.0
     )
     return prm
 
@@ -191,7 +193,9 @@ def _acc_field_on_grid(system: SecondOrderSystem, vt_stream: float,
 
 def main():
     prm = make_default_params()
-    # prm.alpha = 0.00
+    prm.alpha = 0.00
+    prm.kB = 700
+    prm.d_far=0.15
 
     # Laws you asked to keep:
     sys_none  = SecondOrderSystem(prm, NoMagnetic())
@@ -220,8 +224,11 @@ def main():
     # exit()
 
     # Check curvatures
-    law = SineRPhaseMagnetic(phi_max=np.pi/2, sigma_frac=0.35, use_tanh=False, sector_only=True, r1=None, r2=None) #r1=prm.obs.r + 0.15, r2=prm.obs.r + 0.75)
-    traj = law.plot_curvature_maps(prm, save_as=False, xlim=(-2,2), ylim=(-2, 2), vts=(0.6,), with_trajectories=True) # name: "figs/curv_maps_sine_rphase.png"
+    # law = SineRPhaseMagnetic(phi_max=np.pi/6, sigma_frac=0.35, use_tanh=False, sector_only=True, r1=None, r2=None) #r1=prm.obs.r + 0.15, r2=prm.obs.r + 0.75)
+
+    law = TiltedSineMagnetic(phi_max=np.pi/8, sigma_frac=0.35, use_tanh=False, gamma=2.0, w_min=0.0, eps0=0.0, sigma_cap=0.10, kB_cap_rel=0.15, theta_cap=np.pi/6)
+    traj = law.plot_curvature_maps(prm, save_as=False, xlim=(-2,2), ylim=(-2, 2), vts=(0.6,), with_trajectories=True, n_traj=10) # name: "figs/curv_maps_sine_rphase.png"
+    
     law.plot_grazing_normal_maps(prm,
                             save_as=None, # name: "figs/grazing_na_sine_rphase.png" 
                             vts=(0.6,), with_trajectories=True, 

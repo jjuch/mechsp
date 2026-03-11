@@ -46,6 +46,8 @@ class Params:
     c_damp: float = 0.9   # Rayleigh damping coefficient
     kB: float = 1.0       # magnetic gain base
     k_psi: float = 1.0    # goal potential stiffness
+    d_far: float = 3.5    # far field filter - magnitude
+    q_far: float = 2.0    # far field filer - exponent
 
 # -------------------------
 # Geometry
@@ -351,6 +353,7 @@ class MagneticLaw(ABC):
                 starts, Q_all = trajectories
 
             for i, q0 in enumerate(starts):
+                print(f"{i + 1} / {len(starts)}", end="\r")
                 if trajectories is None:
                     _, _, t = dist_n_t(q0, prm.obs)
                     v0 = 0.05 * t
@@ -515,6 +518,69 @@ class MagneticLaw(ABC):
         else: plt.show()
 
         return starts, Q_all
+    
+
+class RoundMagneticLaw(MagneticLaw):
+    name = "baseRound"
+
+    def __init__(self, 
+                 r1: Optional[float] = None,
+                 r2: Optional[float] = None):
+        self.r1 = r1; self.r2 = r2
+        self._annulus_ready = (r1 is not None and r2 is not None)
+
+    # ---- auto selection of (r1,r2) ----    
+    def auto_annulus(self,
+                     prm: Params,
+                     tau_far: float=0.25,
+                     tau_near: float = 1e-3,
+                     min_width: float = 0.04,
+                     max_width: float = 0.50) -> tuple[float,float]:
+        
+        """
+        Simple analytic estimator for (r1,r2):
+          • r2 from φ_far(d2)=tau_far. d_on,q: φ_far(d, q)=exp(-(d/d_on)^q) parameters.
+          • r1 from d1^p = tau_near  => d1 = tau_near^(1/p).
+        Clamps the annulus width to [min_width, max_width].
+
+        Args:
+            tau_far: far-field cutoff (0<tau_far<1).
+            tau_near: near-boundary cutoff for d^p (0<tau_near<1).
+            min_width,max_width: thickness clamp (meters).
+
+        Returns:
+            (r1,r2)
+        """
+        # outer
+        d2 = prm.d_far * (-np.log(max(tau_far, 1e-12))) ** (1.0/max(prm.q_far, 1e-6))
+        # inner
+        d1 = max(1e-6, tau_near**(1.0/max(prm.p, 1e-6)))
+
+        # convert to radii
+        r_obs = prm.obs.r
+        r2 = r_obs + d2
+        r1 = r_obs + d1
+        # print(f"r1: {d1} | r2: {d2}")
+
+        
+        # ensure thickness in [min_width, max_width]
+        width = r2 - r1
+        if width < min_width:
+            # push outward if possible
+            center = 0.5*(r1 + r2)
+            r1 = center - 0.5*min_width
+            r2 = center + 0.5*min_width
+            if r1 < r_obs + 1e-3:
+                r1 = r_obs + 1e-3
+                r2 = r1 + min_width
+        elif width > max_width:
+            center = 0.5*(r1 + r2)
+            r1 = center - 0.5*max_width
+            r2 = center + 0.5*max_width
+
+        self.r1, self.r2 = float(r1), float(r2)
+        self._annulus_ready = True
+        return self.r1, self.r2
 
 
 class NoMagnetic(MagneticLaw):
@@ -564,8 +630,143 @@ class SineMagnetic(MagneticLaw):
         th = theta_rel_goal(q, prm.qg, prm.obs.c)
         base = prm.kB * (max(d,1e-6)**prm.p) * phi_window_far(d)
         return base * ((1.0 - S) + S*np.sin(th))
+    
 
-class SineRPhaseMagnetic(MagneticLaw):
+class TiltedSineMagnetic(RoundMagneticLaw):
+    """
+    Tilted (biased) phase-swept sine on a thin annulus, plus an optional 'knee-cap':
+        b_total = b_tilted_sine + b_kneecap,
+    with:
+        b_tilted(q) = kB d^p * S_ff(d) * A(r) * [ eps0 + a1(r) sin(θ+φ(r)) ] * W(θ),
+        b_kneecap(q) = kB_cap * d^p * S_ff_cap(d) * A_cap(r) * W_cap(theta) + s_outward,
+
+    where:
+      • S_ff(d)  : far-field window φ_far(d).
+      • A(r)     : annular Gaussian centered at r_m=(r1+r2)/2 with width σ_r.
+      • W(θ)     : angular weight with floor w_min (aims the hard semicircle; removes axis corridors).
+      • φ(r)     : phase sweep (same as in SineRPhaseMagnetic).
+      • eps0     : smooth DC bias to avoid sign flips / net-zero along radial rays.
+      • Knee-cap : a tiny, single-sign bump centered at r_cap > r2, narrow wedge around the obstacle-goal axis.
+      
+    Use auto_annulus(prm, ...) once to set (r1,r2) or set them manually.
+    """
+    name = "tilted_sine"
+
+
+    def __init__(self,
+                 r1: Optional[float] = None,
+                 r2: Optional[float] = None,
+                 phi_max: float = np.pi/3,
+                 sigma_frac: float = 0.35,
+                 use_tanh: bool = False,
+                 k_phase: float = 4.0,
+                 gamma: float = 2.0, w_min: float = 0.0,
+                 eps0: float = 0.15,
+                 enable_knee: bool = True,
+                 delta_cap: float = 0.15, # knee-cap center offset: r_cap = r2 + delta_cap
+                 sigma_cap: float = 0.02, # knee-cap radial width (m)
+                 kB_cap_rel: float = 0.15, # knee-cap amplitude relative to kB
+                 theta_cap: float = np.pi/6, # half-width of angular width (rad) around theta=0
+                 q_far_cap: float = 2.0,
+                 d_far_cap: float = 0.45
+                 ):
+        self.r1 = r1; self.r2 = r2 
+        self.phi_max = phi_max
+        self.sigma_frac = sigma_frac
+        self.use_tanh = use_tanh
+        self.k_phase = k_phase
+        self.gamma, self.w_min = gamma, w_min
+        self.eps0 = eps0
+        self._annulus_ready = (r1 is not None and r2 is not None)
+        
+        self.enable_knee = enable_knee
+        self.delta_cap, self.sigma_cap = delta_cap, sigma_cap
+        self.kB_cap_rel = kB_cap_rel
+        self.theta_cap = theta_cap
+        self.q_far_cap, self.d_far_cap = q_far_cap, d_far_cap
+
+
+    # ---- helper pieces ----
+    @ staticmethod
+    def _A_gauss(r: float, r1: float, r2: float, sigma_frac= float) -> float:
+        rm = 0.5 * (r1 + r2)
+        sigma = sigma_frac * max(r2 - r1, 1e-9)
+        return float(np.exp(-((r - rm)**2)/(2*sigma**2)))
+    
+    def _A_gauss_main(self, r):
+        return self._A_gauss(r, self.r1, self.r2, self.sigma_frac)
+
+    def _W_theta(self, th: float) -> float:
+        return float(self.w_min + (1.0 - self.w_min) * ((1.0 - np.cos(th))*0.5)**self.gamma)
+    
+    def _phi_r(self, r: float) -> float:
+        rm = 0.5 * (self.r1 + self.r2)
+        s = (r - rm) / max(0.5*(self.r2 - self.r1), 1e-9)
+        s = float(np.clip(s, -1.0, 1.0))
+        if self.use_tanh:
+            return self.phi_max*np.tanh(self.k_phase*s) / np.tanh(self.k_phase)
+        return self.phi_max*s
+    
+    # ---- helpers knee-cap -----
+    def _S_ff_cap(self, d: float) -> float:
+        return phi_window_far(d, d_on=self.d_far_cap, q=self.q_far_cap)
+    
+    def _A_gauss_cap(self, r: float) -> float:
+        # r2 - r1 = 2 | 0.5*(r1 + r2) = r_cap
+        r_cap = float(self.r2) + self.delta_cap
+        return self._A_gauss(r, r_cap-0.5, r_cap+0.5, self.sigma_cap)
+    
+    def _W_cap_theta(self, th: float) -> float:
+        # raised cosine wedge around theta=0 (gaol axis)
+        def bump(x): # C^1 compact bump in [-theta_cap, theta_cap]
+            if abs(x) > self.theta_cap: return 0.0
+            u = 0.5 * (1 + np.cos(np.pi*x/self.theta_cap)) # cos window
+            return float(u*u) # slightly sharper
+        val = bump(abs(abs(th) - np.pi))
+        return val
+    
+    def kneecap(self,
+                prm: Params,
+                delta_cap: float | None = None,
+                sigma_cap: float | None = None) -> tuple[float, float]:
+        """Return (r_cap, sigma_cap) for the knee-cap: r_cap = r2 + delta_cap"""
+        if delta_cap is not None: self.delta_cap = delta_cap
+        if sigma_cap is not None: self.sigma_cap = sigma_cap
+        return float(self.r2) + self.delta_cap, self.sigma_cap
+    
+
+    def b_scalar(self, q: np.ndarray, prm: Params) -> float:
+        if not self._annulus_ready:
+            self.auto_annulus(prm, tau_far=1e-2, tau_near=1e-2, min_width=0.04, max_width=0.50)
+
+        d, _, _ = dist_n_t(q, prm.obs)
+        qc = q - prm.obs.c; r = np.linalg.norm(qc)
+        th = theta_rel_goal(q, prm.qg, prm.obs.c)
+        A = self._A_gauss_main(r)
+        W = self._W_theta(th)
+        phi = self._phi_r(r)
+
+        a1 = A # Sine lobe on the annulus
+        base = prm.kB * (max(d,1e-6)**prm.p) * phi_window_far(d)
+
+        field_main = base * (self.eps0 + a1*np.sin(th + phi)) * W
+
+        if not self.enable_knee:
+            return field_main
+        
+        # outward normal grazing requires b <= 0 in the knee cap
+        s_outward = -1.0
+        S_ff_cap = self._S_ff_cap(d)
+        A_cap = self._A_gauss_cap(r)
+        W_cap = self._W_cap_theta(th)
+
+        field_knee = (self.kB_cap_rel * prm.kB) * (max(d, 1e-6)**prm.p) * S_ff_cap * A_cap * W_cap * s_outward
+
+        return field_main + field_knee
+
+
+
+class SineRPhaseMagnetic(RoundMagneticLaw):
     """
     Radially phase-swept sine on an annulus r∈[r1,r2]:
         b(d,θ,r) = kB d^p w_ann(r) φ_far(d) sin( θ + φ(r) ),
@@ -609,68 +810,12 @@ class SineRPhaseMagnetic(MagneticLaw):
             return self.phi_max * np.tanh(self.k*s) / np.tanh(self.k)
         return self.phi_max * s
 
-    # ---- auto selection of (r1,r2) ----    
-    def auto_annulus(self,
-                     prm: Params,
-                     tau_far: float=0.25,
-                     tau_near: float = 1e-3,
-                     d_on:float = 0.35,
-                     q: float = 2.0,
-                     min_width: float = 0.04,
-                     max_width: float = 0.50) -> tuple[float,float]:
-        
-        """
-        Simple analytic estimator for (r1,r2):
-          • r2 from φ_far(d2)=tau_far.
-          • r1 from d1^p = tau_near  => d1 = tau_near^(1/p).
-        Clamps the annulus width to [min_width, max_width].
-
-        Args:
-            tau_far: far-field cutoff (0<tau_far<1).
-            tau_near: near-boundary cutoff for d^p (0<tau_near<1).
-            d_on,q: φ_far(d, q)=exp(-(d/d_on)^q) parameters.
-            min_width,max_width: thickness clamp (meters).
-
-        Returns:
-            (r1,r2)
-        """
-        # outer
-        d2 = d_on * (-np.log(max(tau_far, 1e-12))) ** (1.0/max(q, 1e-6))
-        # inner
-        d1 = max(1e-6, tau_near**(1.0/max(prm.p, 1e-6)))
-
-        # convert to radii
-        r_obs = prm.obs.r
-        r2 = r_obs + d2
-        r1 = r_obs + d1
-        # print(f"r1: {d1} | r2: {d2}")
-
-        
-        # ensure thickness in [min_width, max_width]
-        width = r2 - r1
-        if width < min_width:
-            # push outward if possible
-            center = 0.5*(r1 + r2)
-            r1 = center - 0.5*min_width
-            r2 = center + 0.5*min_width
-            if r1 < r_obs + 1e-3:
-                r1 = r_obs + 1e-3
-                r2 = r1 + min_width
-        elif width > max_width:
-            center = 0.5*(r1 + r2)
-            r1 = center - 0.5*max_width
-            r2 = center + 0.5*max_width
-
-        self.r1, self.r2 = float(r1), float(r2)
-        self._annulus_ready = True
-        return self.r1, self.r2
-
     # ---- law ----
     def b_scalar(self, q: np.ndarray, prm: Params) -> float:
         # ensure annulus
-        d_on, q_far = 0.35, 2.0 # phi_window_far parameters
+        # d_on, q_far = 0.35, 2.0 # phi_window_far parameters
         if self.r1 is None or self.r2 is None:
-            self.auto_annulus(prm, tau_far=1e-2, tau_near=1e-2, d_on=d_on, q=q_far, min_width=0.04, max_width=0.50)
+            self.auto_annulus(prm, tau_far=1e-2, tau_near=1e-2, min_width=0.04, max_width=0.50)
         
         r1 = self.r1
         r2 = self.r2
@@ -682,7 +827,7 @@ class SineRPhaseMagnetic(MagneticLaw):
         w_ann = self._w_ann(th)
         phi_r = self._phi_of_r(r, r1, r2)
 
-        base = prm.kB * (max(d,1e-6)**prm.p) * w_ann * phi_window_far(d, d_on=d_on, q=q_far)
+        base = prm.kB * (max(d,1e-6)**prm.p) * w_ann * phi_window_far(d, d_on=prm.d_far, q=prm.q_far)
         return base * np.sin(th + phi_r)
 
 # -------------------------
