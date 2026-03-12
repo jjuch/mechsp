@@ -43,6 +43,7 @@ def make_default_params() -> Params:
         m0=1.0,
         alpha=1.2,
         eps=0.05,
+        eps_b=0.02,
         p=2.0,
         c_damp=0.60,
         kB=100.0,
@@ -196,6 +197,7 @@ def main():
     prm.alpha = 0.00
     prm.kB = 700
     prm.d_far=0.15
+    prm.eps_b = 0.10
 
     # Laws you asked to keep:
     sys_none  = SecondOrderSystem(prm, NoMagnetic())
@@ -226,14 +228,33 @@ def main():
     # Check curvatures
     # law = SineRPhaseMagnetic(phi_max=np.pi/6, sigma_frac=0.35, use_tanh=False, sector_only=True, r1=None, r2=None) #r1=prm.obs.r + 0.15, r2=prm.obs.r + 0.75)
 
-    law = TiltedSineMagnetic(phi_max=np.pi/8, sigma_frac=0.35, use_tanh=False, gamma=2.0, w_min=0.0, eps0=0.0, sigma_cap=0.10, kB_cap_rel=0.15, theta_cap=np.pi/6)
-    traj = law.plot_curvature_maps(prm, save_as=False, xlim=(-2,2), ylim=(-2, 2), vts=(0.6,), with_trajectories=True, n_traj=10) # name: "figs/curv_maps_sine_rphase.png"
+    law = TiltedSineMagnetic(phi_max=np.pi/8, 
+                             sigma_frac=0.45, 
+                             use_tanh=False, 
+                             gamma=2.0, 
+                             w_min=0.0, 
+                             eps0=0.0, 
+                             sigma_cap=0.10, 
+                             kB_cap_rel=0.20, 
+                             theta_cap=np.pi/6,
+                             delta_cap=0.07)
+    
+    traj = law.plot_curvature_maps(prm, 
+                                   save_as=False, # name: "figs/curv_maps_sine_rphase.png"
+                                   xlim=(-2,2), 
+                                   ylim=(-2, 2), 
+                                   vts=(0.6,), 
+                                   with_trajectories=True, 
+                                   n_traj=10, 
+                                   plot_radii=True) 
     
     law.plot_grazing_normal_maps(prm,
-                            save_as=None, # name: "figs/grazing_na_sine_rphase.png" 
-                            vts=(0.6,), with_trajectories=True, 
-                            trajectories=traj,
-                            axis_gap=0.0) # ignore +-0.10 rad around the goal axis if the angular window zeros ther
+                                save_as=None, # name: "figs/grazing_na_sine_rphase.png" 
+                                vts=(0.6,), 
+                                with_trajectories=True, 
+                                trajectories=traj,
+                                axis_gap=0.0, 
+                                plot_radii=True) # ignore +-0.10 rad around the goal axis if the angular window zeros ther
 
 if __name__ == "__main__":
     main()

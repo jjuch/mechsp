@@ -42,6 +42,7 @@ class Params:
     m0: float = 1.0       # base mass
     alpha: float = 1.2    # metric normal amplification gain
     eps: float = 0.05     # metric regularization (m)
+    eps_b: float = 0.02   # magnetic base level near obstacle (d -> 0)
     p: float = 2.0        # exponent for distance law d^p (p>1)
     c_damp: float = 0.9   # Rayleigh damping coefficient
     kB: float = 1.0       # magnetic gain base
@@ -246,7 +247,8 @@ class MagneticLaw(ABC):
                             vts: Tuple[float, ...] = (0.6,),
                             with_trajectories: bool = True,
                             trajectories: tuple[np.ndarray, list] | None = None,
-                            n_traj: int = 5) -> tuple[np.ndarray, list]:
+                            n_traj: int = 5,
+                            plot_radii: bool = False) -> tuple[np.ndarray, list]:
         """
         Plot a 2×2 grid of signed curvature fields:
           [ total | magnetic ]
@@ -262,6 +264,7 @@ class MagneticLaw(ABC):
             with_trajectories: overlay trajectories from initial positions aligned with goal.
             trajectories: pre-simulated trajectories with starts and the simulated time series.
             n_traj: number of starting points.
+            plot_radii: optional, plot the circles with radius r1 and r2.
 
         Returns:
             starts: the starting positions of the simulated trajectories. If ´with_trajectories´ is False, None is returned.
@@ -335,6 +338,9 @@ class MagneticLaw(ABC):
             im = ax.imshow(M, origin='lower', extent=[xlim[0], xlim[1], ylim[0], ylim[1]], cmap='RdBu_r', norm=norm)
             ax.add_patch(Circle(prm.obs.c, prm.obs.r, facecolor='w', alpha=0.6,
                                    edgecolor='k', linewidth=1.0))
+            if plot_radii:
+                ax.add_patch(Circle(prm.obs.c, self.r1, facecolor='none', alpha=0.6, edgecolor='g', linewidth=1.0))
+                ax.add_patch(Circle(prm.obs.c, self.r2, facecolor='none', alpha=0.6, edgecolor='g', linewidth=1.0))
 
             # add colorbar
             divider = make_axes_locatable(ax)
@@ -388,7 +394,9 @@ class MagneticLaw(ABC):
                                  with_trajectories: bool = True,
                                  trajectories: tuple[np.ndarray, list] | None = None,
                                  n_traj: int = 5,
-                                 axis_gap: float | None = None) -> tuple[np.ndarray, list]:
+                                 axis_gap: float | None = None,
+                                 goal_conditioned: bool = True,
+                                 plot_radii:bool = False) -> tuple[np.ndarray, list]:
         
         """
         Visual debugger for the grazing boundary condition n·a on a grid.
@@ -407,6 +415,8 @@ class MagneticLaw(ABC):
             trajectories: pre-simulated trajectories with starts and the simulated time series.
             n_traj: how many starting points.
             axis_gap: optionally ignore a wedge |θ|<axis_gap (rad) around the goal axis to avoid window=0 pixels dominating (useful for sine/sine_rphase).
+            goal_conditioned : bool, use the Nagumo‑like, policy‑conditioned grazing speed, or in the case of False use v = v_t * t.
+            plot_radii : optional, plot the circles with radius r1 and r2. 
 
         Returns:
             starts: the starting positions of the simulated trajectories. If ´with_trajectories´ is False, None is returned.
@@ -437,7 +447,13 @@ class MagneticLaw(ABC):
                 
                 nat_list, nab_list, nageom_list, nagoal_list = [], [], [], []
                 for vt in vts:
-                    v = vt * t
+                    if goal_conditioned:
+                        # choose the tangential direction that makes progress toward the goal
+                        sgn_goal = np.sign( t @ (-system.grad_psi(q)) )  # projection of -∇ψ on t
+                        v = vt * ( sgn_goal * t if sgn_goal != 0 else t )
+                    else:
+                        v = vt * t
+
                     M = system.M_of_q(q); Minv = np.linalg.inv(M)
                     Cv=  system.C_times_qdot(q, v)
                     N = system.N_of_q(q)
@@ -474,6 +490,9 @@ class MagneticLaw(ABC):
             norm = TwoSlopeNorm(vcenter=0.0, vmin=vmi, vmax=vma)
             im = ax.imshow(M, origin='lower', extent=[xlim[0], xlim[1], ylim[0], ylim[1]], cmap='RdBu_r', norm=norm)
             ax.add_patch(Circle(prm.obs.c, prm.obs.r, facecolor='w', alpha=0.6, edgecolor='k', linewidth=1.0))
+            if plot_radii:
+                ax.add_patch(Circle(prm.obs.c, self.r1, facecolor='none', alpha=0.6, edgecolor='g', linewidth=1.0))
+                ax.add_patch(Circle(prm.obs.c, self.r2, facecolor='none', alpha=0.6, edgecolor='g', linewidth=1.0))
 
             # zero contour for visual boundary of sign flip
             try:
@@ -580,6 +599,7 @@ class RoundMagneticLaw(MagneticLaw):
 
         self.r1, self.r2 = float(r1), float(r2)
         self._annulus_ready = True
+        print(f" r1: {r1}\n r2:{r2}")
         return self.r1, self.r2
 
 
@@ -602,9 +622,11 @@ class PowerMagnetic(MagneticLaw):
     b(d)=kB * d^p * φ_far(d).
     """
     name = "dp"
-    def b_scalar(self, q: np.ndarray, prm: Params) -> float:
+
+    @staticmethod
+    def b_scalar(q: np.ndarray, prm: Params) -> float:
         d,_,_ = dist_n_t(q, prm.obs)
-        return prm.kB * (max(d,1e-6)**prm.p) * phi_window_far(d)
+        return prm.kB * ((max(d,1e-6) + prm.eps_b)**prm.p) * phi_window_far(d, d_on=prm.d_far, q=prm.q_far)
 
 class SineMagnetic(MagneticLaw):
     """
@@ -628,7 +650,7 @@ class SineMagnetic(MagneticLaw):
         d,_,_ = dist_n_t(q, prm.obs)
         S = self._switch(d)
         th = theta_rel_goal(q, prm.qg, prm.obs.c)
-        base = prm.kB * (max(d,1e-6)**prm.p) * phi_window_far(d)
+        base = PowerMagnetic.b_scalar(q, prm)
         return base * ((1.0 - S) + S*np.sin(th))
     
 
@@ -695,9 +717,50 @@ class TiltedSineMagnetic(RoundMagneticLaw):
     
     def _A_gauss_main(self, r):
         return self._A_gauss(r, self.r1, self.r2, self.sigma_frac)
+    
+    @staticmethod
+    def _wrap_pi(th: float) -> float:
+        """Wrap angle to (-pi, pi]."""
+        return (th + np.pi) % (2*np.pi) - np.pi
 
-    def _W_theta(self, th: float) -> float:
-        return float(self.w_min + (1.0 - self.w_min) * ((1.0 - np.cos(th))*0.5)**self.gamma)
+    def _W_theta(self, th: float, use_beta_allow: bool = True, beta_allow: float = np.pi/2) -> float:
+        """
+        Angular weight that favors the goal-opposing side (±π) with a controllable
+        angular reach measured from the perpendicular axis (±π/2) toward ±π.
+
+        Args
+        ----
+        th : float
+            Angle w.r.t. obstacle→goal axis. th=0 points toward the goal; th=±π is goal-opposing.
+        use_beta_allow : bool, default False
+            Whether you want to use the feature of beta_allow.
+        beta_allow : float, default π/2
+            Allowed angular extent (in radians) from the perpendicular axis toward the goal-opposing axis.
+            Range: (0, π/2]. Smaller values restrict the active region to a thin wedge just beyond ±π/2.
+
+        Returns
+        -------
+        float
+            A smooth weight in [w_min, 1], with:
+            • ≈ w_min on the goal side and deep in the far side (beyond the allowed reach),
+            • raised smoothly from w_min→1 within the allowed wedge of width beta_allow,
+            • symmetric across the two far-side halves (around ±π).
+        """
+        if use_beta_allow:
+            th = self._wrap_pi(th)
+            delta_opp = abs(self._wrap_pi(th - np.pi)) # distance to +pi (same as -pi after wrap)
+            delta = max(0.0, np.pi/2 - delta_opp) # delta = 0 at +-pi/2 and everywhere on goal side; increases to pi/2
+
+            # Normalize by the allowed reach beta_allow
+            beta = max(1e-9, min(beta_allow, np.pi/2))
+            u = np.clip(delta/beta, 0.0, 1.0)
+
+            # smooth raised cosine ramp on [0, beta]; u = 0 -> w_min (at perpendicular); u=1 -> 1.0 (at inner edge of allowed wedge)
+            bump = (0.5* (1.0 - np.cos(np.pi * u))) ** self.gamma
+        else:
+            bump = (0.5 * (1.0 - np.cos(np.pi)))**self.gamma
+
+        return float(self.w_min + (1.0 - self.w_min) * bump)
     
     def _phi_r(self, r: float) -> float:
         rm = 0.5 * (self.r1 + self.r2)
@@ -737,17 +800,17 @@ class TiltedSineMagnetic(RoundMagneticLaw):
 
     def b_scalar(self, q: np.ndarray, prm: Params) -> float:
         if not self._annulus_ready:
-            self.auto_annulus(prm, tau_far=1e-2, tau_near=1e-2, min_width=0.04, max_width=0.50)
+            self.auto_annulus(prm, tau_far=1e-2, tau_near=1e-3, min_width=0.04, max_width=0.50)
 
         d, _, _ = dist_n_t(q, prm.obs)
         qc = q - prm.obs.c; r = np.linalg.norm(qc)
         th = theta_rel_goal(q, prm.qg, prm.obs.c)
         A = self._A_gauss_main(r)
-        W = self._W_theta(th)
+        W = self._W_theta(th, beta_allow=np.pi/3)
         phi = self._phi_r(r)
 
         a1 = A # Sine lobe on the annulus
-        base = prm.kB * (max(d,1e-6)**prm.p) * phi_window_far(d)
+        base = PowerMagnetic.b_scalar(q, prm)
 
         field_main = base * (self.eps0 + a1*np.sin(th + phi)) * W
 
@@ -827,8 +890,8 @@ class SineRPhaseMagnetic(RoundMagneticLaw):
         w_ann = self._w_ann(th)
         phi_r = self._phi_of_r(r, r1, r2)
 
-        base = prm.kB * (max(d,1e-6)**prm.p) * w_ann * phi_window_far(d, d_on=prm.d_far, q=prm.q_far)
-        return base * np.sin(th + phi_r)
+        base = PowerMagnetic.b_scalar(q, prm)
+        return base * np.sin(th + phi_r) * w_ann
 
 # -------------------------
 # Diagnostics
