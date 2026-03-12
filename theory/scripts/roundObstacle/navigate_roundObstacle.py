@@ -2,7 +2,7 @@
 Minimal library for the 2‑D second‑order navigation model with round obstacle-aware metric and gyroscopic two-form. Includes:
   • Geometry utilities.
   • SecondOrderSystem (Levi–Civita, Rayleigh damping).
-  • Magnetic laws: None, Const, Power(dp), Sine (θ), SineRPhase (θ + φ(r)).
+  • Magnetic laws: None, Const, Power(dp), Sine (θ), TwistedSine, SineRPhase (θ + φ(r)).
   • Diagnostics: boundary compliance, annulus auto-selection for SineRPhase.
   • Lightweight simulation (RK4).
 
@@ -17,7 +17,10 @@ from typing import Callable, Iterable, Tuple, List, Dict, Optional
 import matplotlib.pyplot as plt
 from matplotlib.colors import TwoSlopeNorm
 from matplotlib.patches import Circle
+from matplotlib.collections import LineCollection
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+from PyQt5.QtCore import QTimer
 
 # -------------------------
 # Constants & helpers
@@ -189,7 +192,7 @@ class SecondOrderSystem:
         x = np.hstack([q0, v0])
         T = [0.0]; X=[x.copy()]; E=[self.energy(x)]
         for k in range(int(tmax/h)):
-            print(f"{k} / {int(tmax/h)}", end="\r")
+            print(f"Simulation step: {k + 1} / {int(tmax/h)}", end="\r", flush=True)
             d,_,_ = dist_n_t(x[:2], self.prm.obs)
             if d < 0:  # collided
                 break
@@ -224,6 +227,7 @@ def _signed_kappa(v: np.ndarray, a: np.npdarray) -> float:
 class MagneticLaw(ABC):
     """Strategy base for N(q)=b(q)*J."""
     name: str = "base"
+
     @abstractmethod
     def b_scalar(self, q: np.ndarray, prm: Params) -> float:
         ...
@@ -236,6 +240,171 @@ class MagneticLaw(ABC):
         if not vals: return np.nan
         arr = np.asarray(vals, float)
         return float(np.sqrt(np.mean(arr**2))) * np.sign(np.mean(arr))
+
+    
+    def plot_trajectories(self,
+                          prm: Params,
+                          save_as: str | None = None,
+                          plot: bool = True,
+                          xlim: Tuple[float, float] = (-2.0, 2.0),
+                          ylim: Tuple[float, float] = (-2.0, 2.0),
+                          grid: Tuple[int, int] = (90, 90),
+                          q0: np.ndarray | None = None,
+                          vn: float = 0.00,
+                          vt: float = 0.05,
+                          n_traj: int = 5) -> tuple[np.ndarray, list, list, list]:
+        """
+        Plot the simulated trajectories for a magnetic law.
+
+        Args:
+            prm:   Params (scenario).
+            save_as: path to PNG; if None it might be shown instead (see 'plot').
+            plot: show a plot of the trajectories with the color indicating the velocity
+            xlim,ylim: plot domain.
+            grid: (Nx,Ny) sampling grid.
+            vn, vt: normal and tangential initial velocity relative to the obstacle.
+            n_traj: number of starting points.
+        
+        Returns:
+            q0: initial positions, size n_traj
+            Q_all: n_traj position vectors times N x 2, with N the time vector's length
+            V_all: n_traj velocity vectors times N x 2, with N the time vector's length
+            T_all: n_traj time vectors.
+        """
+        system = SecondOrderSystem(prm, self)
+
+        if q0 is None:
+            q0 = _initial_positions_aligned_with_goal(prm, num=n_traj)
+
+        Q_all = []
+        V_all = []
+        T_all = []
+        for i, qi in enumerate(q0):
+            print(f"q0: {i + 1} / {len(q0)}", flush=True)
+            _, n, t = dist_n_t(qi, prm.obs)
+            v0 = vn * n + vt * t
+            T, Xs, _ = system.simulate(qi, v0, h=0.05, tmax=40.0)
+            print("\033[F", end="", flush=True) # go up one line, not robust, because it breaks if other things are printed.
+            Q = Xs[:, :2]
+            V = Xs[:, 2:4]
+            Q_all.append(Q)
+            V_all.append(V)
+            T_all.append(T)
+
+        generate_figure = plot or save_as is not None
+
+        if generate_figure:
+            # Calculate velocities
+            vel_mag = [np.linalg.norm(v, axis=1) for v in V_all]
+            v_min = np.min([v.min() for v in vel_mag])
+            v_max = np.max([v.max() for v in vel_mag])
+
+            fig, ax = plt.subplots(figsize=(10, 7))
+
+            for i, (qi, Q, v) in enumerate(zip(q0, Q_all, vel_mag)):
+                # make segments of (x, y) to (x+1, y+1)
+                pts = Q.reshape(-1, 1, 2)
+                seg = np.concatenate([pts[:-1], pts[1:]], axis=1)
+
+                # make linecollection and couple velocity of point (x, y) to line segment
+                lc = LineCollection(seg, cmap='jet', norm=plt.Normalize(v_min, v_max))
+                lc.set_array(v[:-1])
+                lc.set_linewidth(2)
+                ax.add_collection(lc)
+                sc = ax.scatter(Q[:,0], Q[:,1], c=v, cmap='jet', s=5, vmin=v_min, vmax=v_max, edgecolor='none')
+
+                # add obstacle
+                ax.add_patch(Circle(prm.obs.c, prm.obs.r, facecolor='w', alpha=0.6, edgecolor='k', linewidth=1.0))
+                
+                # add initial point
+                ax.plot(qi[0], qi[1], 'ko', ms=3, zorder=6)
+
+            # colorbar
+            sm = plt.cm.ScalarMappable(cmap='jet', norm=plt.Normalize(v_min, v_max))
+            fig.colorbar(sm, ax=ax, label='Velocity (Magnitude) [m/s]')
+            ax.set_xlabel('x [m]')
+            ax.set_ylabel('y [m]')
+
+            ax.plot(prm.qg[0], prm.qg[1], 'y*', ms=10, zorder=50)
+            ax.set_aspect('equal')
+            plt.tight_layout(); plt.grid(True, alpha=0.2)
+            if save_as: plt.savefig(save_as, dpi=180); plt.close(fig)
+            else: plt.show()
+
+        return q0, Q_all, V_all, T_all
+    
+    @staticmethod
+    def add_trajectories(trajectories, fig, axes):
+        q0, Q_all, V_all, T_all = trajectories
+
+        # obtain the global min and max value of the velocities  
+        vel_mag = [np.linalg.norm(v, axis=1) for v in V_all]
+        v_min = np.min([v.min() for v in vel_mag])
+        v_max = np.max([v.max() for v in vel_mag])
+
+        all_scatters = [[] for _ in range(len(axes.flatten()))]
+        all_annots = []
+
+        for j, ax in enumerate(axes.flatten()):
+            for i, (qi, Q, v) in enumerate(zip(q0, Q_all, vel_mag)):
+                # plot trajectory
+                ax.plot(Q[:, 0], Q[:, 1], color='gray', alpha=0.2, lw=1)
+                sc = ax.scatter(Q[:,0], Q[:,1], c=v, cmap='jet', s=10, vmin=v_min, vmax=v_max, edgecolor='k', linewidth=0.5, zorder=5)
+                all_scatters[j].append(sc)
+
+                # plot initial positions
+                ax.plot(qi[0], qi[1], 'ko', ms=3, zorder=6)
+            
+            # make invisble empty annotation
+            annot = ax.annotate("", xy=(0,0), xytext=(10,10), textcoords="offset points", bbox=dict(boxstyle="round", fc="w", alpha=0.8, ec="gray"), arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=0"), zorder=20, clip_on=False)
+            annot.set_visible(False)
+            all_annots.append(annot)
+
+        # add hover tooltips to show velocity - time sensitivity included
+        hover_timer = QTimer()
+        hover_timer.setSingleShot(True)
+        last_event = None
+
+        def update_tooltip():
+            global last_event
+            if not last_event or not last_event.inaxes: return
+
+            ax_idx = axes.flatten().tolist().index(last_event.inaxes)
+            scatters = all_scatters[ax_idx]
+            annot = all_annots[ax_idx]
+
+            for i, sc in enumerate(scatters):
+                cont, ind = sc.contains(last_event) # check whether it is on a point
+                if cont:
+                    # update position and text
+                    pos = sc.get_offsets()[ind["ind"][0]]
+                    annot.xy = pos
+                    speed_val = vel_mag[i][ind["ind"][0]]
+                    annot.set_text(f"|v| = {speed_val:.2f} m/s")
+                    annot.set_visible(True)
+                    fig.canvas.draw_idle() # forced update
+                    return
+        
+        def on_mouse_move(event):
+            global last_event
+            last_event = event
+
+            # Hide all annotations immediately at movement
+            for ann in all_annots:
+                if ann.get_visible():
+                    ann.set_visible(False)
+            fig.canvas.draw_idle()
+            
+            # start timer: show tooltip if mouse still for 200ms
+            hover_timer.stop()
+            if event.inaxes:
+                hover_timer.start(100)
+            
+        fig.canvas.mpl_connect("motion_notify_event", on_mouse_move)
+        hover_timer.timeout.connect(update_tooltip)
+        
+        return fig, axes
+
     
 
     def plot_curvature_maps(self,
@@ -246,7 +415,7 @@ class MagneticLaw(ABC):
                             grid: Tuple[int, int] = (90, 90),
                             vts: Tuple[float, ...] = (0.6,),
                             with_trajectories: bool = True,
-                            trajectories: tuple[np.ndarray, list] | None = None,
+                            trajectories: tuple[np.ndarray, list, list, list] | None = None,
                             n_traj: int = 5,
                             plot_radii: bool = False) -> tuple[np.ndarray, list]:
         """
@@ -262,13 +431,15 @@ class MagneticLaw(ABC):
             grid: (Nx,Ny) sampling grid.
             vts: grazing speeds to aggregate (RMS with mean sign).
             with_trajectories: overlay trajectories from initial positions aligned with goal.
-            trajectories: pre-simulated trajectories with starts and the simulated time series.
+            trajectories: pre-simulated trajectories with starts and the simulated time series. Generate with 'plot_trajectories'.
             n_traj: number of starting points.
             plot_radii: optional, plot the circles with radius r1 and r2.
 
         Returns:
-            starts: the starting positions of the simulated trajectories. If ´with_trajectories´ is False, None is returned.
+            q0: the starting positions of the simulated trajectories. If ´with_trajectories´ is False, None is returned.
             Q_all: a list of np.ndarray's with the simulated positions. If ´with_trajectories´is False, None is returned.
+            V_all: a list of np.ndarray's with the simulated velocities. If ´with_trajectories´is False, None is returned.
+            T_all: a list of np.ndarray's with the simulated time vectors. If ´with_trajectories´is False, None is returned.
         """
         system = SecondOrderSystem(prm, self)
 
@@ -281,13 +452,6 @@ class MagneticLaw(ABC):
         K_B    = np.full_like(XX, np.nan, dtype=float)
         K_geom = np.full_like(XX, np.nan, dtype=float)
         K_goal = np.full_like(XX, np.nan, dtype=float)
-
-
-        # Per-pixel aggregation over vts: RMS magnitude with mean-sign to avoid random sign flips.
-        # def _agg(vals: List[float]) -> float:
-        #     if not vals: return np.nan
-        #     vals = np.asarray(vals, dtype=float)
-        #     return float(np.sqrt(np.mean(vals**2))) * np.sign(np.mean(vals))
 
         for i in range(Nx):
             for j in range(Ny):
@@ -323,24 +487,28 @@ class MagneticLaw(ABC):
         # color scaling (diverging, centered at 0)
         stack = np.vstack([K_tot.ravel(), K_B.ravel(),
                            K_geom.ravel(), K_goal.ravel()])
-        vmax = np.nanpercentile(stack, 99, axis=1)
-        vmax = [max(v, 1e-4) for v in vmax]
-        vmin = np.nanmin(stack, axis=1)
-        vmin = [min(v, -1e-4) for v in vmin]
+        kmax = np.nanpercentile(stack, 99, axis=1)
+        kmax = [max(k, 1e-4) for k in kmax]
+        kmin = np.nanmin(stack, axis=1)
+        kmin = [min(k, -1e-4) for k in kmin]
 
         fig, axes = plt.subplots(2, 2, figsize=(11.2, 9.2))
         mats   = [K_tot, K_B, K_geom, K_goal]
         titles = [r'$\kappa_{\rm s,tot}$', r'$\kappa_{\rm s,B}$',
                   r'$\kappa_{\rm s,geom}$', r'$\kappa_{\rm s,goal}$']
 
-        for ax, M, T, vma, vmi in zip(axes.flatten(), mats, titles, vmax, vmin):
-            norm = TwoSlopeNorm(vcenter=0.0, vmin=vmi, vmax=vma)
+        for ax, M, T, kma, kmi in zip(axes.flatten(), mats, titles, kmax, kmin):
+            norm = TwoSlopeNorm(vcenter=0.0, vmin=kmi, vmax=kma)
             im = ax.imshow(M, origin='lower', extent=[xlim[0], xlim[1], ylim[0], ylim[1]], cmap='RdBu_r', norm=norm)
-            ax.add_patch(Circle(prm.obs.c, prm.obs.r, facecolor='w', alpha=0.6,
-                                   edgecolor='k', linewidth=1.0))
+            ax.add_patch(Circle(prm.obs.c, prm.obs.r, facecolor='w', alpha=0.6, edgecolor='k', linewidth=1.0))
+
             if plot_radii:
-                ax.add_patch(Circle(prm.obs.c, self.r1, facecolor='none', alpha=0.6, edgecolor='g', linewidth=1.0))
-                ax.add_patch(Circle(prm.obs.c, self.r2, facecolor='none', alpha=0.6, edgecolor='g', linewidth=1.0))
+                try:
+                    ax.add_patch(Circle(prm.obs.c, self.r1, facecolor='none', alpha=0.6, edgecolor='g', linewidth=1.0))
+                    ax.add_patch(Circle(prm.obs.c, self.r2, facecolor='none', alpha=0.6, edgecolor='g', linewidth=1.0))
+                except AttributeError: 
+                    # self.r1 or self.r2 does not exist
+                    pass
 
             # add colorbar
             divider = make_axes_locatable(ax)
@@ -353,35 +521,24 @@ class MagneticLaw(ABC):
         # overlay trajectories
         if with_trajectories:
             if trajectories is None:
-                starts = _initial_positions_aligned_with_goal(prm, num=n_traj)
-                Q_all = []
-            else:
-                starts, Q_all = trajectories
+                trajectories = self.plot_trajectories(prm, plot=False, xlim=xlim, ylim=ylim, grid=grid, q0=None, vn=0.0, vt=0.05, n_traj=n_traj)
 
-            for i, q0 in enumerate(starts):
-                print(f"{i + 1} / {len(starts)}", end="\r")
-                if trajectories is None:
-                    _, _, t = dist_n_t(q0, prm.obs)
-                    v0 = 0.05 * t
-                    _, Xs, _ = system.simulate(q0, v0, h=0.05, tmax=40.0)
-                    Q = Xs[:, :2]
-                    Q_all.append(Q)
-                else:
-                    Q = Q_all[i]
-                for ax in axes.flatten():
-                    ax.plot(Q[:,0], Q[:,1], '-', lw=2, color='k', alpha=0.85, zorder=5)
-                    ax.plot(q0[0], q0[1], 'ko', ms=3, zorder=6)
+            q0, Q_all, V_all, T_all = trajectories
+
+            # add trajectories with annotation of speed
+            self.add_trajectories(trajectories, fig, axes)
+     
         else:
-            Q_all = None; starts = None
+            q0 = None; Q_all = None; V_all = None; T_all = None
         
         for ax in axes.flatten():
-            ax.plot(prm.qg[0], prm.qg[1], 'y*', ms=20, zorder=50)
+            ax.plot(prm.qg[0], prm.qg[1], 'y*', ms=20, zorder=19)
 
         plt.tight_layout()
         if save_as: plt.savefig(save_as, dpi=180); plt.close(fig)
-        else:       plt.show()
+        else: plt.show()
 
-        return starts, Q_all
+        return q0, Q_all, V_all, T_all
 
 
     def plot_grazing_normal_maps(self, 
@@ -392,7 +549,7 @@ class MagneticLaw(ABC):
                                  grid: tuple[int,int] = (90, 90),
                                  vts: tuple[float,...] = (0.6,),
                                  with_trajectories: bool = True,
-                                 trajectories: tuple[np.ndarray, list] | None = None,
+                                 trajectories: tuple[np.ndarray, list, list, list] | None = None,
                                  n_traj: int = 5,
                                  axis_gap: float | None = None,
                                  goal_conditioned: bool = True,
@@ -412,15 +569,17 @@ class MagneticLaw(ABC):
             grid: (Nx,Ny) sampling resolution.
             vts: list of grazing speeds to aggregate.
             with_trajectories: overlay trajectories from _initial_positions_aligned_with_goal.
-            trajectories: pre-simulated trajectories with starts and the simulated time series.
+            trajectories: pre-simulated trajectories with starts and the simulated time series. Generate with 'plot_trajectories'.
             n_traj: how many starting points.
             axis_gap: optionally ignore a wedge |θ|<axis_gap (rad) around the goal axis to avoid window=0 pixels dominating (useful for sine/sine_rphase).
             goal_conditioned : bool, use the Nagumo‑like, policy‑conditioned grazing speed, or in the case of False use v = v_t * t.
             plot_radii : optional, plot the circles with radius r1 and r2. 
 
         Returns:
-            starts: the starting positions of the simulated trajectories. If ´with_trajectories´ is False, None is returned.
+            q0: the starting positions of the simulated trajectories. If ´with_trajectories´ is False, None is returned.
             Q_all: a list of np.ndarray's with the simulated positions. If ´with_trajectories´is False, None is returned.
+            V_all: a list of np.ndarray's with the simulated velocities. If ´with_trajectories´is False, None is returned.
+            T_all: a list of np.ndarray's with the simulated time vectors. If ´with_trajectories´is False, None is returned.
         """
         system = SecondOrderSystem(prm, self)
 
@@ -491,8 +650,12 @@ class MagneticLaw(ABC):
             im = ax.imshow(M, origin='lower', extent=[xlim[0], xlim[1], ylim[0], ylim[1]], cmap='RdBu_r', norm=norm)
             ax.add_patch(Circle(prm.obs.c, prm.obs.r, facecolor='w', alpha=0.6, edgecolor='k', linewidth=1.0))
             if plot_radii:
-                ax.add_patch(Circle(prm.obs.c, self.r1, facecolor='none', alpha=0.6, edgecolor='g', linewidth=1.0))
-                ax.add_patch(Circle(prm.obs.c, self.r2, facecolor='none', alpha=0.6, edgecolor='g', linewidth=1.0))
+                try:
+                    ax.add_patch(Circle(prm.obs.c, self.r1, facecolor='none', alpha=0.6, edgecolor='g', linewidth=1.0))
+                    ax.add_patch(Circle(prm.obs.c, self.r2, facecolor='none', alpha=0.6, edgecolor='g', linewidth=1.0))
+                except AttributeError:
+                    # self.r1 or self.r2 does not exist
+                    pass
 
             # zero contour for visual boundary of sign flip
             try:
@@ -509,25 +672,14 @@ class MagneticLaw(ABC):
 
         if with_trajectories:
             if trajectories is None:
-                starts = _initial_positions_aligned_with_goal(prm, num=n_traj)
-                Q_all = []
-            else:
-                starts, Q_all = trajectories
-            
-            for i, q0 in enumerate(starts):
-                if trajectories is None:
-                    _,_, t = dist_n_t(q0, prm.obs)
-                    v0 = 0.05*t
-                    _, Xs, _ = system.simulate(q0, v0, h=0.05, tmax=40.0)
-                    Q = Xs[:,:2]
-                    Q_all.append(Q)
-                else:
-                    Q = Q_all[i]
-                for ax in axes.flatten():
-                    ax.plot(Q[:,0], Q[:,1], '-', lw=2, color='k', alpha=0.85, zorder=5)
-                    ax.plot(q0[0], q0[1],'ko', ms=3, zorder=6)
+                trajectories = self.plot_trajectories(prm, plot=False, xlim=xlim, ylim=ylim, grid=grid, q0=None, vn=0.0, vt=0.05, n_traj=n_traj)
+
+            q0, Q_all, V_all, T_all = trajectories
+
+            # add trajectories with annotation of speed
+            self.add_trajectories(trajectories, fig, axes)
         else:
-            Q_all = None; starts = None
+            q0 = None; Q_all = None; V_all = None; T_all = None
 
         for ax in axes.flatten():
             ax.plot(prm.qg[0], prm.qg[1], 'y*', ms=20, zorder=50)
@@ -536,7 +688,7 @@ class MagneticLaw(ABC):
         if save_as: plt.savefig(save_as, dpi=180); plt.close(fig)
         else: plt.show()
 
-        return starts, Q_all
+        return q0, Q_all, V_all, T_all
     
 
 class RoundMagneticLaw(MagneticLaw):
@@ -554,7 +706,8 @@ class RoundMagneticLaw(MagneticLaw):
                      tau_far: float=0.25,
                      tau_near: float = 1e-3,
                      min_width: float = 0.04,
-                     max_width: float = 0.50) -> tuple[float,float]:
+                     max_width: float = 0.50,
+                     verbose: bool = False) -> tuple[float,float]:
         
         """
         Simple analytic estimator for (r1,r2):
@@ -566,6 +719,7 @@ class RoundMagneticLaw(MagneticLaw):
             tau_far: far-field cutoff (0<tau_far<1).
             tau_near: near-boundary cutoff for d^p (0<tau_near<1).
             min_width,max_width: thickness clamp (meters).
+            verbose: print r1 and r2.
 
         Returns:
             (r1,r2)
@@ -579,9 +733,7 @@ class RoundMagneticLaw(MagneticLaw):
         r_obs = prm.obs.r
         r2 = r_obs + d2
         r1 = r_obs + d1
-        # print(f"r1: {d1} | r2: {d2}")
-
-        
+            
         # ensure thickness in [min_width, max_width]
         width = r2 - r1
         if width < min_width:
@@ -599,7 +751,8 @@ class RoundMagneticLaw(MagneticLaw):
 
         self.r1, self.r2 = float(r1), float(r2)
         self._annulus_ready = True
-        print(f" r1: {r1}\n r2:{r2}")
+        if verbose:
+            print(f" r1: {r1}\n r2:{r2}", flush=True)
         return self.r1, self.r2
 
 
@@ -800,7 +953,7 @@ class TiltedSineMagnetic(RoundMagneticLaw):
 
     def b_scalar(self, q: np.ndarray, prm: Params) -> float:
         if not self._annulus_ready:
-            self.auto_annulus(prm, tau_far=1e-2, tau_near=1e-3, min_width=0.04, max_width=0.50)
+            self.auto_annulus(prm, tau_far=1e-2, tau_near=1e-3, min_width=0.04, max_width=0.50, verbose=False)
 
         d, _, _ = dist_n_t(q, prm.obs)
         qc = q - prm.obs.c; r = np.linalg.norm(qc)
@@ -878,7 +1031,7 @@ class SineRPhaseMagnetic(RoundMagneticLaw):
         # ensure annulus
         # d_on, q_far = 0.35, 2.0 # phi_window_far parameters
         if self.r1 is None or self.r2 is None:
-            self.auto_annulus(prm, tau_far=1e-2, tau_near=1e-2, min_width=0.04, max_width=0.50)
+            self.auto_annulus(prm, tau_far=1e-2, tau_near=1e-2, min_width=0.04, max_width=0.50, verbose=False)
         
         r1 = self.r1
         r2 = self.r2

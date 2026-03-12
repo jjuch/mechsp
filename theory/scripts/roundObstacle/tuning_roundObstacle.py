@@ -194,12 +194,13 @@ def _acc_field_on_grid(system: SecondOrderSystem, vt_stream: float,
 
 def main():
     prm = make_default_params()
+    # overwrite default parameters
     prm.alpha = 0.00
     prm.kB = 700
     prm.d_far=0.15
     prm.eps_b = 0.10
 
-    # Laws you asked to keep:
+    # Laws:
     sys_none  = SecondOrderSystem(prm, NoMagnetic())
     sys_const = SecondOrderSystem(prm, ConstMagnetic())
     sys_dp    = SecondOrderSystem(prm, PowerMagnetic())
@@ -209,7 +210,7 @@ def main():
                                                                 sigma_frac=0.35,
                                                                 use_tanh=False,
                                                                 k=4.0,
-                                                                sector_only=True, r1=prm.obs.r + 0.15, r2=prm.obs.r + 0.75))
+                                                                sector_only=True, r1=None, r2=None))
 
     # You can comment modes in/out as needed
     systems = [
@@ -238,13 +239,21 @@ def main():
                              kB_cap_rel=0.20, 
                              theta_cap=np.pi/6,
                              delta_cap=0.07)
+    sys_tilted_sine = SecondOrderSystem(prm, b_law=law)
+
+    traj = law.plot_trajectories(prm,
+                                 save_as=None,
+                                 plot=True,
+                                 q0=None,
+                                 n_traj=10)
     
-    traj = law.plot_curvature_maps(prm, 
+    law.plot_curvature_maps(prm, 
                                    save_as=False, # name: "figs/curv_maps_sine_rphase.png"
                                    xlim=(-2,2), 
                                    ylim=(-2, 2), 
                                    vts=(0.6,), 
-                                   with_trajectories=True, 
+                                   with_trajectories=True,
+                                   trajectories=traj,
                                    n_traj=10, 
                                    plot_radii=True) 
     
