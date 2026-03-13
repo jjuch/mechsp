@@ -241,18 +241,22 @@ def main():
                              delta_cap=0.07)
     sys_tilted_sine = SecondOrderSystem(prm, b_law=law)
 
-    traj = law.plot_trajectories(prm,
-                                 save_as=None,
-                                 plot=True,
-                                 q0=None,
-                                 n_traj=10)
-    
+    show_traj = True
+    if show_traj:
+        traj = law.plot_trajectories(prm,
+                                    save_as=None,
+                                    plot=True,
+                                    q0=None,
+                                    n_traj=10)
+    else:
+        traj = None
+
     law.plot_curvature_maps(prm, 
                                    save_as=False, # name: "figs/curv_maps_sine_rphase.png"
                                    xlim=(-2,2), 
                                    ylim=(-2, 2), 
                                    vts=(0.6,), 
-                                   with_trajectories=True,
+                                   with_trajectories=show_traj,
                                    trajectories=traj,
                                    n_traj=10, 
                                    plot_radii=True) 
@@ -260,7 +264,7 @@ def main():
     law.plot_grazing_normal_maps(prm,
                                 save_as=None, # name: "figs/grazing_na_sine_rphase.png" 
                                 vts=(0.6,), 
-                                with_trajectories=True, 
+                                with_trajectories=show_traj, 
                                 trajectories=traj,
                                 axis_gap=0.0, 
                                 plot_radii=True) # ignore +-0.10 rad around the goal axis if the angular window zeros ther

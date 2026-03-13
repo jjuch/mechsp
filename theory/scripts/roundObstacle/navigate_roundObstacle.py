@@ -335,6 +335,7 @@ class MagneticLaw(ABC):
     
     @staticmethod
     def add_trajectories(trajectories, fig, axes):
+        print("Trajectories added...")
         q0, Q_all, V_all, T_all = trajectories
 
         # obtain the global min and max value of the velocities  
@@ -487,7 +488,7 @@ class MagneticLaw(ABC):
         # color scaling (diverging, centered at 0)
         stack = np.vstack([K_tot.ravel(), K_B.ravel(),
                            K_geom.ravel(), K_goal.ravel()])
-        kmax = np.nanpercentile(stack, 99, axis=1)
+        kmax = np.nanmax(stack, axis=1)
         kmax = [max(k, 1e-4) for k in kmax]
         kmin = np.nanmin(stack, axis=1)
         kmin = [min(k, -1e-4) for k in kmin]
@@ -497,7 +498,7 @@ class MagneticLaw(ABC):
         titles = [r'$\kappa_{\rm s,tot}$', r'$\kappa_{\rm s,B}$',
                   r'$\kappa_{\rm s,geom}$', r'$\kappa_{\rm s,goal}$']
 
-        for ax, M, T, kma, kmi in zip(axes.flatten(), mats, titles, kmax, kmin):
+        for i, (ax, M, T, kma, kmi) in enumerate(zip(axes.flatten(), mats, titles, kmax, kmin)):
             norm = TwoSlopeNorm(vcenter=0.0, vmin=kmi, vmax=kma)
             im = ax.imshow(M, origin='lower', extent=[xlim[0], xlim[1], ylim[0], ylim[1]], cmap='RdBu_r', norm=norm)
             ax.add_patch(Circle(prm.obs.c, prm.obs.r, facecolor='w', alpha=0.6, edgecolor='k', linewidth=1.0))
@@ -635,18 +636,18 @@ class MagneticLaw(ABC):
 
         stack = np.vstack([NA_tot.ravel(), NA_B.ravel(),
                            NA_geom.ravel(), NA_goal.ravel()])
-        vmax = np.nanpercentile(stack, 99, axis=1)
-        vmax = [max(v, 1e-4) for v in vmax]
-        vmin = np.nanmin(stack, axis=1)
-        vmin = [min(v, -1e-4) for v in vmin]
+        namax = np.nanmax(stack, axis=1)
+        namax = [max(na, 1e-4) for na in namax]
+        namin = np.nanmin(stack, axis=1)
+        namin = [min(na, -1e-4) for na in namin]
 
         fig, axes = plt.subplots(2, 2, figsize=(11.2, 9.2))
         mats = [NA_tot, NA_B, NA_geom, NA_goal]
         titles = [r'$n\!\cdot a_{\rm tot}$', r'$n\!\cdot a_{B}$',
                   r'$n\!\cdot a_{\rm geom}$', r'$n\!\cdot a_{\rm goal}$']
         
-        for ax, M, T, vmi, vma in zip(axes.flatten(), mats, titles, vmin, vmax):
-            norm = TwoSlopeNorm(vcenter=0.0, vmin=vmi, vmax=vma)
+        for ax, M, T, nami, nama in zip(axes.flatten(), mats, titles, namin, namax):
+            norm = TwoSlopeNorm(vcenter=0.0, vmin=nami, vmax=nama)
             im = ax.imshow(M, origin='lower', extent=[xlim[0], xlim[1], ylim[0], ylim[1]], cmap='RdBu_r', norm=norm)
             ax.add_patch(Circle(prm.obs.c, prm.obs.r, facecolor='w', alpha=0.6, edgecolor='k', linewidth=1.0))
             if plot_radii:
@@ -677,6 +678,7 @@ class MagneticLaw(ABC):
             q0, Q_all, V_all, T_all = trajectories
 
             # add trajectories with annotation of speed
+            print("Adding Trajectories...", end="\r")
             self.add_trajectories(trajectories, fig, axes)
         else:
             q0 = None; Q_all = None; V_all = None; T_all = None
