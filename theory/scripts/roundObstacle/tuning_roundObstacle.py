@@ -201,35 +201,22 @@ def main():
     prm.eps_b = 0.10
 
     # Laws:
-    sys_none  = SecondOrderSystem(prm, NoMagnetic())
-    sys_const = SecondOrderSystem(prm, ConstMagnetic())
-    sys_dp    = SecondOrderSystem(prm, PowerMagnetic())
-    sys_sine  = SecondOrderSystem(prm, SineMagnetic(d_sw=0.06, w_sw=0.02))
+    sys_none  = SecondOrderSystem(prm, NoMagnetic(prm))
+    sys_const = SecondOrderSystem(prm, ConstMagnetic(prm))
+    sys_dp    = SecondOrderSystem(prm, PowerMagnetic(prm))
+    sys_sine  = SecondOrderSystem(prm, SineMagnetic(prm, d_sw=0.00, w_sw=0.00))
     # Radially-phased sine: r1,r2 are computed automatically from the 'none' compliance profile.
-    sys_sine_rphase = SecondOrderSystem(prm, SineRPhaseMagnetic(phi_max=np.pi/2,
+    sys_sine_rphase = SecondOrderSystem(prm, SineRPhaseMagnetic(prm, phi_max=np.pi/2,
                                                                 sigma_frac=0.35,
                                                                 use_tanh=False,
                                                                 k=4.0,
                                                                 sector_only=True, r1=None, r2=None))
-
-    # You can comment modes in/out as needed
-    systems = [
-        ("none",          sys_none),
-        ("const",         sys_const),
-        ("dp",            sys_dp),
-        ("sine",          sys_sine),
-        ("sine_rphase",   sys_sine_rphase),
-    ]
-
-    # figA_invariance(prm, systems, save_as="figs/FigA_invariance.png")
-    # figB_trajectories(prm, systems, save_as="figs/FigB_trajectories.png")
-    # figC_ring_accels(prm, systems, save_as="figs/FigC_ring_accels.png")
+    
+    # sys_sine.b_law.plot_curvature_maps(with_trajectories=True, n_traj=3,plot_radii=True)
     # exit()
-
-    # Check curvatures
-    # law = SineRPhaseMagnetic(phi_max=np.pi/6, sigma_frac=0.35, use_tanh=False, sector_only=True, r1=None, r2=None) #r1=prm.obs.r + 0.15, r2=prm.obs.r + 0.75)
-
-    law = TiltedSineMagnetic(phi_max=np.pi/8, 
+    
+    law = TiltedSineMagnetic(prm,
+                            phi_max=np.pi/8, 
                              sigma_frac=0.45, 
                              use_tanh=False, 
                              gamma=2.0, 
@@ -241,28 +228,57 @@ def main():
                              delta_cap=0.07)
     sys_tilted_sine = SecondOrderSystem(prm, b_law=law)
 
+    # You can comment modes in/out as needed
+    systems = [
+        ("none",          sys_none),
+        # ("const",         sys_const),
+        # ("dp",            sys_dp),
+        # ("sine",          sys_sine),
+        ("sine_rphase",   sys_sine_rphase),
+        ("sine_tilted", sys_tilted_sine)
+    ]
+
+    # figA_invariance(prm, systems, save_as="figs/FigA_invariance.png")
+    # figB_trajectories(prm, systems, save_as="figs/FigB_trajectories.png")
+    # figC_ring_accels(prm, systems, save_as="figs/FigC_ring_accels.png")
+    # exit()
+
+    # Check curvatures
+    # law = SineRPhaseMagnetic(phi_max=np.pi/6, sigma_frac=0.35, use_tanh=False, sector_only=True, r1=None, r2=None) #r1=prm.obs.r + 0.15, r2=prm.obs.r + 0.75)
+
+    
+
     show_traj = True
     if show_traj:
-        traj = law.plot_trajectories(prm,
-                                    save_as=None,
+        traj = law.plot_trajectories(save_as=None,
                                     plot=True,
                                     q0=None,
-                                    n_traj=10)
+                                    n_traj=3)
     else:
         traj = None
 
-    law.plot_curvature_maps(prm, 
-                                   save_as=False, # name: "figs/curv_maps_sine_rphase.png"
-                                   xlim=(-2,2), 
-                                   ylim=(-2, 2), 
-                                   vts=(0.6,), 
-                                   with_trajectories=show_traj,
-                                   trajectories=traj,
-                                   n_traj=10, 
-                                   plot_radii=True) 
+    for mode in ['tangent', 'headon']:
+        law.predict_RA(mode=mode,
+                       vt_list=(0.5, 1.0, 1.5),
+                       vn_list=(0.5, 1.0, 1.5),
+                       n_theta=240,
+                       with_trajectories=True,
+                       trajectories=traj,
+                       n_traj=10,
+                       axis_choice='both'
+                       )
+        
+
+    law.plot_curvature_maps(save_as=False, # name: "figs/curv_maps_sine_rphase.png"
+                            xlim=(-2,2), 
+                            ylim=(-2, 2), 
+                            vts=(0.6,), 
+                            with_trajectories=show_traj,
+                            trajectories=traj,
+                            n_traj=10, 
+                            plot_radii=True) 
     
-    law.plot_grazing_normal_maps(prm,
-                                save_as=None, # name: "figs/grazing_na_sine_rphase.png" 
+    law.plot_grazing_normal_maps(save_as=None, # name: "figs/grazing_na_sine_rphase.png" 
                                 vts=(0.6,), 
                                 with_trajectories=show_traj, 
                                 trajectories=traj,

@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 import numpy as np
-from typing import Callable, Iterable, Tuple, List, Dict, Optional
+from typing import Callable, Iterable, Tuple, List, Dict, Optional, Literal
 import matplotlib.pyplot as plt
 from matplotlib.colors import TwoSlopeNorm
 from matplotlib.patches import Circle
@@ -157,7 +157,7 @@ class SecondOrderSystem:
 
     # ---- gyroscopic two-form ----
     def N_of_q(self, q: np.ndarray) -> np.ndarray:
-        return self.b_law.b_scalar(q, self.prm) * J
+        return self.b_law.b_scalar(q) * J
 
     # ---- dynamics ----
     def rhs(self, x: np.ndarray) -> np.ndarray:
@@ -215,7 +215,7 @@ def _initial_positions_aligned_with_goal(prm: Params, num: int = 5) -> np.ndarra
     alphas = np.linspace(-1.5*r, 1.5*r, num)
     return np.array([base + a*eperp for a in alphas])
 
-def _signed_kappa(v: np.ndarray, a: np.npdarray) -> float:
+def _signed_kappa(v: np.ndarray, a: np.ndarray) -> float:
     sp = np.linalg.norm(v)
     if sp < 1e-10: return 0.0
     return float((v[0]*a[1] - v[1]*a[0]) / (sp**3))
@@ -228,8 +228,11 @@ class MagneticLaw(ABC):
     """Strategy base for N(q)=b(q)*J."""
     name: str = "base"
 
+    def __init__(self, prm):
+        self.prm = prm
+
     @abstractmethod
-    def b_scalar(self, q: np.ndarray, prm: Params) -> float:
+    def b_scalar(self, q: np.ndarray) -> float:
         ...
 
     @staticmethod
@@ -243,7 +246,6 @@ class MagneticLaw(ABC):
 
     
     def plot_trajectories(self,
-                          prm: Params,
                           save_as: str | None = None,
                           plot: bool = True,
                           xlim: Tuple[float, float] = (-2.0, 2.0),
@@ -271,6 +273,7 @@ class MagneticLaw(ABC):
             V_all: n_traj velocity vectors times N x 2, with N the time vector's length
             T_all: n_traj time vectors.
         """
+        prm = self.prm
         system = SecondOrderSystem(prm, self)
 
         if q0 is None:
@@ -369,8 +372,11 @@ class MagneticLaw(ABC):
         def update_tooltip():
             global last_event
             if not last_event or not last_event.inaxes: return
-
-            ax_idx = axes.flatten().tolist().index(last_event.inaxes)
+            
+            try:
+                ax_idx = axes.flatten().tolist().index(last_event.inaxes)
+            except ValueError:
+                return
             scatters = all_scatters[ax_idx]
             annot = all_annots[ax_idx]
 
@@ -409,7 +415,6 @@ class MagneticLaw(ABC):
     
 
     def plot_curvature_maps(self,
-                            prm:Params,
                             save_as: str | None = None,
                             xlim: Tuple[float, float] = (-2.0, 2.0),
                             ylim: Tuple[float, float] = (-2.0, 2.0),
@@ -442,6 +447,7 @@ class MagneticLaw(ABC):
             V_all: a list of np.ndarray's with the simulated velocities. If ´with_trajectories´is False, None is returned.
             T_all: a list of np.ndarray's with the simulated time vectors. If ´with_trajectories´is False, None is returned.
         """
+        prm = self.prm
         system = SecondOrderSystem(prm, self)
 
         Nx, Ny = grid
@@ -522,7 +528,7 @@ class MagneticLaw(ABC):
         # overlay trajectories
         if with_trajectories:
             if trajectories is None:
-                trajectories = self.plot_trajectories(prm, plot=False, xlim=xlim, ylim=ylim, grid=grid, q0=None, vn=0.0, vt=0.05, n_traj=n_traj)
+                trajectories = self.plot_trajectories(plot=False, xlim=xlim, ylim=ylim, grid=grid, q0=None, vn=0.0, vt=0.05, n_traj=n_traj)
 
             q0, Q_all, V_all, T_all = trajectories
 
@@ -543,7 +549,6 @@ class MagneticLaw(ABC):
 
 
     def plot_grazing_normal_maps(self, 
-                                 prm: Params,
                                  save_as: str | None = None,
                                  xlim: tuple[float,float] = (-2.0, 2.0),
                                  ylim: tuple[float,float] = (-2.0, 2.0),
@@ -582,10 +587,11 @@ class MagneticLaw(ABC):
             V_all: a list of np.ndarray's with the simulated velocities. If ´with_trajectories´is False, None is returned.
             T_all: a list of np.ndarray's with the simulated time vectors. If ´with_trajectories´is False, None is returned.
         """
+        prm = self.prm
         system = SecondOrderSystem(prm, self)
 
         Nx, Ny = grid
-        xs = np.linspace(xlim[0], ylim[1], Nx)
+        xs = np.linspace(xlim[0], xlim[1], Nx)
         ys = np.linspace(ylim[0], ylim[1], Ny)
         XX, YY = np.meshgrid(xs, ys)
 
@@ -673,7 +679,7 @@ class MagneticLaw(ABC):
 
         if with_trajectories:
             if trajectories is None:
-                trajectories = self.plot_trajectories(prm, plot=False, xlim=xlim, ylim=ylim, grid=grid, q0=None, vn=0.0, vt=0.05, n_traj=n_traj)
+                trajectories = self.plot_trajectories(plot=False, xlim=xlim, ylim=ylim, grid=grid, q0=None, vn=0.0, vt=0.05, n_traj=n_traj)
 
             q0, Q_all, V_all, T_all = trajectories
 
@@ -692,20 +698,245 @@ class MagneticLaw(ABC):
 
         return q0, Q_all, V_all, T_all
     
+    def predict_RA(self,
+                   mode: Literal['tangent', 'headon'] = 'headon',
+                   vt_list: Tuple[float,...] = (0.5, 1.0, 1.5),
+                   vn_list: Tuple[float,...] = (0.5, 1.0, 1.5),
+                   n_theta: int = 180,
+                   axis_choice: Literal['goal', 'opp', 'both'] = 'both',
+                   plot: bool = True,
+                   with_trajectories: bool = True,
+                   trajectories: tuple[np.ndarray, list, list, list] | None = None,
+                   n_traj: int = 5,
+                   save_as: str | None = None):
+        """
+        Predict (conservatively, without simulating) which launch conditions at r=r2
+        are safe (do not hit the obstacle), using closed-form integrals of b(q).
+
+        mode='tangent'  : sweep launch angle θ0 ∈ [-π,π), speeds vt_list (grazing).
+                          Safety margin: Δψ_B^tang - ψ_req(Γ).
+        mode='headon'   : evaluate axis launches (goal / goal-opposing) with normal
+                          speeds vn_list. Safety margin: Δψ_B^head - π/2.
+
+        Returns:
+            dict with grids and safe masks; and produces an explanatory plot if plot=True.
+
+        """
+        prm = self.prm
+        # --- ensure ring r2 is defined (only tilted sine and sine_rphase) ---
+        r_obs = prm.obs.r
+        r1 = getattr(self, 'r1', None)
+        r2 = getattr(self, 'r2', None)
+        if (r1 is None) or (r2 is None):
+            raise SyntaxError("Only valid for tilted sine and sine_rphase.")
+        
+        d2 = float(r2 - r_obs)
+        m0 = prm.m0 # TODO: include if alpha != 0
+
+        # --- helper: integrate b along angle on ring (for 'tangent' mode) ---
+        def angle_integral_b(theta0: float, dtheta:float) -> float:
+            """
+            Integrate b(r2,theta) over theta ∈ [theta0, theta0 + dtheta] (signed dtheta). Uses trapezoidal rule on a small grid – not a time simulation of the ODE, just an integral of the analytic b_scalar.
+            """
+            n_int = max(32, int(abs(dtheta) / (np.pi/180))) # ~ 1.0 deg steps
+            thetas = np.linspace(theta0, theta0 + dtheta, n_int)
+            qs = prm.obs.c + r2 * np.column_stack([np.cos(thetas), np.sin(thetas)])
+            vals = np.array([self.b_scalar(q) for q in qs], dtype=float)
+            return float(np.trapz(vals, thetas))
+        
+        # ---- helper: integrate b along radius on axis ray ('headon' mode)---
+        def radial_integral_b(theta_axis: float) -> float:
+            """
+            Integrate b(r, theta_axis) over r in [r_obs, r2].
+            """
+            n_int = 256 # 512
+            rs = np.linspace(r_obs, r2, n_int)
+            qs = prm.obs.c + np.column_stack([rs * np.cos(theta_axis), rs * np.sin(theta_axis)])
+            vals = np.array([self.b_scalar(q) for q in qs], dtype=float)
+            return float(np.trapz(vals, rs))
+        
+        out = dict(mode=mode, r1=r1, r2=r2, safe_mask=None)
+
+        if mode == 'tangent':
+            # sample theta0 uniformly around the circle
+            thetas0 = np.linspace(-np.pi, np.pi, n_theta, endpoint=False)
+            # determine active angular sector length Δtheta_\Gamma for each theta0
+            beta_allow = getattr(self, 'beta_allow', np.pi/2) if hasattr(self, '_W_theta') else np.pi/2
+            dtheta_sector = 2.0 * beta_allow
+
+            margin = np.zeros((len(vt_list), len(thetas0)))
+            for i_vt, vt in enumerate(vt_list):
+                for j, th0 in enumerate(thetas0):
+                    print(f"[{len(vt_list)} | {len(thetas0)} // {i_vt + 1} | {j + 1}]", end='\r')
+                    # int(b dtheta) over sector; \grad psi_B^tang = (r2/(m0*vt)) int(b dtheta)
+                    Ib = angle_integral_b(th0, dtheta_sector) 
+                    dpsi = (r2 / (m0 * vt)) * Ib
+                    # required clear-angle to avoid inward drift through sector
+                    dpsi_req = max(0.0, d2 / (r2 * dtheta_sector))
+                    margin[i_vt, j] = dpsi - dpsi_req
+
+            # build boolean mask of safe (margin >= 0)
+            safe_mask = (margin >= 0.0)
+            out.update(dict(theta0=thetas0, vt_list=vt_list, margin=margin, safe_mask=safe_mask))
+
+            if plot:
+                self._plot_RA_tangent(thetas0, vt_list, margin, safe_mask, r2, with_trajectories, trajectories, n_traj, save_as)
+
+        elif mode == 'headon':
+            # choose axis angle to test
+            axes = []
+            if axis_choice in ('goal', 'both'):
+                axes.append(0.0) # theta = 0 goal axis
+            if axis_choice in ('opp', 'both'):
+                axes.append(np.pi) # theta = pi goal-opposing axis
+
+            margin = np.zeros((len(vn_list), len(axes)))
+            for i_vn, vn in enumerate(vn_list):
+                for j, th_ax in enumerate(axes):
+                    print(f"[{len(vn_list)} | {len(axes)} // {i_vn + 1} | {j + 1}]", end='\r')
+                    # int(b dr) for R to r2; \grad \psi_B^head = (1/m0*vn)) * int(b dr)
+                    Ib_r = radial_integral_b(th_ax)
+                    dpsi = (1.0 / (m0*vn)) * Ib_r
+                    margin[i_vn, j] = dpsi - (0.5*np.pi) # need at least Pi/2
+
+            safe_mask = (margin >= 0.0)
+            out.update(dict(axes=np.array(axes), vn_list=vn_list, margin=margin, safe_mask=safe_mask))
+
+            if plot:
+                self._plot_RA_headon(np.array(axes), vn_list, margin, safe_mask, r2, with_trajectories, trajectories, n_traj, save_as)
+
+        else:
+            raise ValueError("Mode must be 'tangent' or 'headon'.")
+        
+        return out
+    
+    # --- plotting helpers for RA predictor ----
+    def _plot_RA_tangent(self, thetas0, vt_list, margin, safe_mask, r2, with_trajectories, trajectories, n_traj, save_as):
+        prm = self.prm
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5.6))
+
+        # heatmap margin(vt, theta)
+        im = axes[0].imshow(margin, aspect='auto', origin='lower', extent=[thetas0[0], thetas0[-1], vt_list[0], vt_list[-1]], cmap='RdBu_r', vmin=-np.max(abs(margin)), vmax=np.max(abs(margin)))
+
+        axes[0].set_xlabel(r'Launch angle $\theta_0$ on $r=r_2$')
+        axes[0].set_ylabel(r'$v_t$ [m/s]')
+        axes[0].set_title(r'$\Delta\psi^{\rm tang}_B - \psi_{\rm req}$  (safe ≥ 0)')
+
+        # add colorbar
+        divider = make_axes_locatable(axes[0])
+        cax = divider.append_axes("right", size="5%", pad=0.1)
+        norm = TwoSlopeNorm(vcenter=0.0, vmin=-np.max(abs(margin)), vmax=np.max(abs(margin)))
+        cbar = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap='RdBu_r'),
+                            ax=axes[0], cax=cax, shrink=0.92, pad=0.02)
+        cbar.set_label('margin [rad]')
+        
+        # map view: safe/unsafe rays at r=r2
+        ax = axes[1]
+        ths = thetas0
+        xs = prm.obs.c[0] + r2*np.cos(ths)
+        ys = prm.obs.c[1] + r2*np.sin(ths)
+        ax.add_patch(Circle(prm.obs.c, prm.obs.r, facecolor='w', alpha=0.6,
+                            edgecolor='k', linewidth=1))
+        ax.plot(prm.qg[0], prm.qg[1], 'y*', ms=16, zorder=10)
+        # mark safe sectors for a representative vt (e.g., middle index)
+        mid = len(vt_list)//2
+        for j, th in enumerate(ths):
+            col = 'tab:green' if safe_mask[mid, j] else 'tab:red'
+            ax.plot([prm.obs.c[0], xs[j]], [prm.obs.c[1], ys[j]], color=col, alpha=0.6, lw=1.6)
+        ax.set_aspect('equal'); ax.grid(True, alpha=0.2)
+        ax.set_title(f'safe rays at r2 (vt≈{vt_list[mid]:.2f} m/s)')
+        plt.tight_layout()
+
+        if with_trajectories:
+            if trajectories is None:
+                trajectories = self.plot_trajectories(plot=False, q0=None, vn=0.0, vt=0.05, n_traj=n_traj)
+
+            # q0, Q_all, V_all, T_all = trajectories
+
+            # add trajectories with annotation of speed
+            print("Adding Trajectories...", end="\r")
+            self.add_trajectories(trajectories, fig, np.array([ax]))
+
+        if save_as: 
+            plt.savefig(save_as.replace('.png', '_tangent_RA.png'), dpi=180)
+            plt.close(fig)
+        else:
+            plt.show()
+
+    def _plot_RA_headon(self, axes_list, vn_list, margin, safe_mask, r2, with_trajectories, trajectories, n_traj, save_as):
+        prm = self.prm
+
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5.6))
+
+        # heatmap: margin (vn, axis)
+        ax0 = axes[0]
+        im = ax0.imshow(margin, aspect="auto", origin='lower', extent=[0, len(axes_list) - 1, vn_list[0], vn_list[-1]], cmap='RdBu_r', vmin=-np.max(abs(margin)), vmax=np.max(abs(margin)))
+        ax0.set_xticks(range(len(axes_list)))
+        ax0.set_xticklabels(['goal' if abs(a) < 1e-6 else 'opp' for a in axes_list])
+        ax0.set_ylabel(r'$v_n$ [m/s]')
+        ax0.set_title(r'$\Delta\psi^{\rm head}_B - \pi/2$ (safe ≥ 0)')
+
+        # add colorbar
+        divider = make_axes_locatable(axes[0])
+        cax = divider.append_axes("right", size="5%", pad=0.1)
+        norm = TwoSlopeNorm(vcenter=0.0, vmin=-np.max(abs(margin)), vmax=np.max(abs(margin)))
+        cbar = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap='RdBu_r'),
+                            ax=axes[0], cax=cax, shrink=0.92, pad=0.02)
+        cbar.set_label('margin [rad]')
+
+        # map view: draw axis rays and color by safety for a representative v_n
+        mid = len(vn_list) // 2
+        ax = axes[1]
+        ax.add_patch(Circle(prm.obs.c, prm.obs.r, facecolor='w', alpha=0.6,
+                            edgecolor='k', linewidth=1))
+        ax.plot(prm.qg[0], prm.qg[1], 'y*', ms=16, zorder=10)
+        for j, th in enumerate(axes_list):
+            col = 'tab:green' if safe_mask[mid, j] else 'tab:red'
+            x = prm.obs.c[0] + r2*np.cos(th)
+            y = prm.obs.c[1] + r2*np.sin(th)
+            ax.plot([prm.obs.c[0], x], [prm.obs.c[1], y], color=col, lw=2)
+        ax.set_aspect('equal'); ax.grid(True, alpha=0.2)
+        ax.set_title(f'head-on safety at r2 (vn = {vn_list[mid]:.2f} m/s)')
+        plt.tight_layout()
+
+        if with_trajectories:
+            if trajectories is None:
+                trajectories = self.plot_trajectories(plot=False, q0=None, vn=0.0, vt=0.05, n_traj=n_traj)
+
+            # q0, Q_all, V_all, T_all = trajectories
+
+            # add trajectories with annotation of speed
+            print("Adding Trajectories...", end="\r")
+            self.add_trajectories(trajectories, fig, np.array([ax]))
+
+        if save_as: 
+            plt.savefig(save_as.replace('.png', '_headon_RA.png'), dpi=180)
+            plt.close(fig)
+        else:
+            plt.show()
+
 
 class RoundMagneticLaw(MagneticLaw):
     name = "baseRound"
 
     def __init__(self, 
+                 prm: Params,
                  r1: Optional[float] = None,
-                 r2: Optional[float] = None):
+                 r2: Optional[float] = None,
+                 tau_far: Optional[float] = 1e-3,
+                 tau_near: Optional[float] = 1e-3,
+                 min_width: Optional[float] = 0.04,
+                 max_width: Optional[float] = 0.50):
+        super().__init__(prm)
         self.r1 = r1; self.r2 = r2
         self._annulus_ready = (r1 is not None and r2 is not None)
 
+        if not self._annulus_ready:
+            self.auto_annulus(tau_far, tau_near, min_width, max_width)
+
     # ---- auto selection of (r1,r2) ----    
     def auto_annulus(self,
-                     prm: Params,
-                     tau_far: float=0.25,
+                     tau_far: float=1e-3,
                      tau_near: float = 1e-3,
                      min_width: float = 0.04,
                      max_width: float = 0.50,
@@ -726,6 +957,7 @@ class RoundMagneticLaw(MagneticLaw):
         Returns:
             (r1,r2)
         """
+        prm = self.prm
         # outer
         d2 = prm.d_far * (-np.log(max(tau_far, 1e-12))) ** (1.0/max(prm.q_far, 1e-6))
         # inner
@@ -760,39 +992,69 @@ class RoundMagneticLaw(MagneticLaw):
 
 class NoMagnetic(MagneticLaw):
     name = "none"
-    def b_scalar(self, q: np.ndarray, prm: Params) -> float:
-        return 0.0
+    
+    @classmethod
+    def b_scalar(cls, q: np.ndarray) -> float:
+        return 0.0 * q
 
 class ConstMagnetic(MagneticLaw):
     """
     b(d)=kB * φ_far(d).
     """
     name = "const"
-    def b_scalar(self, q: np.ndarray, prm: Params) -> float:
-        d,_,_ = dist_n_t(q, prm.obs)
-        return prm.kB * phi_window_far(d)
 
-class PowerMagnetic(MagneticLaw):
+    def __init__(self, prm: Params):
+        super().__init__(prm)
+
+    def b_scalar(self, q: np.ndarray) -> float:
+        prm = self.prm
+        d,_,_ = dist_n_t(q, prm.obs)
+        return prm.kB * phi_window_far(d, d_on=prm.d_far, q=prm.q_far)
+
+class PowerMagnetic(RoundMagneticLaw):
     """
     b(d)=kB * d^p * φ_far(d).
     """
     name = "dp"
 
-    @staticmethod
-    def b_scalar(q: np.ndarray, prm: Params) -> float:
-        d,_,_ = dist_n_t(q, prm.obs)
-        return prm.kB * ((max(d,1e-6) + prm.eps_b)**prm.p) * phi_window_far(d, d_on=prm.d_far, q=prm.q_far)
+    def __init__(self, 
+                 prm: Params,
+                 r1: Optional[float] = None,
+                 r2: Optional[float] = None):
+        super().__init__(prm, r1, r2)
+        self.cst_law = ConstMagnetic(self.prm)
 
-class SineMagnetic(MagneticLaw):
+
+    def b_scalar(self, q: np.ndarray) -> float:
+        prm = self.prm
+        d,_,_ = dist_n_t(q, prm.obs)
+        cst = self.cst_law.b_scalar(q)
+        
+        return cst * ((max(d,1e-6) + prm.eps_b)**prm.p)
+
+class SignedPowerMagnetic(RoundMagneticLaw):
+    """
+    
+    """
+    pass
+
+class SineMagnetic(RoundMagneticLaw):
     """
     Single-lobe sine in angle: b(d,θ)=kB d^p φ_far(d) * [(1-S(d)) + S(d) sin θ],
     where S(d)=switch that keeps outward sign in the very near field.
     """
     name = "sine"
 
-    def __init__(self, d_sw: float = 0.06, w_sw: float = 0.02):
+    def __init__(self, 
+                 prm: Params,
+                 r1: Optional[float] = None,
+                 r2: Optional[float] = None,
+                 d_sw: Optional[float] = 0.06, 
+                 w_sw: Optional[float] = 0.02):
         self.d_sw = d_sw
         self.w_sw = w_sw
+        super().__init__(prm, r1, r2)
+        self.power_law = PowerMagnetic(self.prm, self.r1, self.r2)
 
     def _switch(self, d: float) -> float:
         """
@@ -801,11 +1063,12 @@ class SineMagnetic(MagneticLaw):
         x = (max(d,0.0) - self.d_sw) / max(self.w_sw, 1e-6)
         return 0.5*(1.0 + np.tanh(x))
 
-    def b_scalar(self, q: np.ndarray, prm: Params) -> float:
+    def b_scalar(self, q: np.ndarray) -> float:
+        prm = self.prm
         d,_,_ = dist_n_t(q, prm.obs)
         S = self._switch(d)
         th = theta_rel_goal(q, prm.qg, prm.obs.c)
-        base = PowerMagnetic.b_scalar(q, prm)
+        base = self.power_law.b_scalar(q)
         return base * ((1.0 - S) + S*np.sin(th))
     
 
@@ -831,6 +1094,7 @@ class TiltedSineMagnetic(RoundMagneticLaw):
 
 
     def __init__(self,
+                 prm: Params,
                  r1: Optional[float] = None,
                  r2: Optional[float] = None,
                  phi_max: float = np.pi/3,
@@ -847,7 +1111,6 @@ class TiltedSineMagnetic(RoundMagneticLaw):
                  q_far_cap: float = 2.0,
                  d_far_cap: float = 0.45
                  ):
-        self.r1 = r1; self.r2 = r2 
         self.phi_max = phi_max
         self.sigma_frac = sigma_frac
         self.use_tanh = use_tanh
@@ -862,9 +1125,12 @@ class TiltedSineMagnetic(RoundMagneticLaw):
         self.theta_cap = theta_cap
         self.q_far_cap, self.d_far_cap = q_far_cap, d_far_cap
 
+        super().__init__(prm)
+        self.base_law = PowerMagnetic(prm, self.r1, self.r2)
+
 
     # ---- helper pieces ----
-    @ staticmethod
+    @staticmethod
     def _A_gauss(r: float, r1: float, r2: float, sigma_frac= float) -> float:
         rm = 0.5 * (r1 + r2)
         sigma = sigma_frac * max(r2 - r1, 1e-9)
@@ -944,7 +1210,6 @@ class TiltedSineMagnetic(RoundMagneticLaw):
         return val
     
     def kneecap(self,
-                prm: Params,
                 delta_cap: float | None = None,
                 sigma_cap: float | None = None) -> tuple[float, float]:
         """Return (r_cap, sigma_cap) for the knee-cap: r_cap = r2 + delta_cap"""
@@ -953,9 +1218,10 @@ class TiltedSineMagnetic(RoundMagneticLaw):
         return float(self.r2) + self.delta_cap, self.sigma_cap
     
 
-    def b_scalar(self, q: np.ndarray, prm: Params) -> float:
+    def b_scalar(self, q: np.ndarray) -> float:
+        prm = self.prm
         if not self._annulus_ready:
-            self.auto_annulus(prm, tau_far=1e-2, tau_near=1e-3, min_width=0.04, max_width=0.50, verbose=False)
+            self.auto_annulus(tau_far=1e-2, tau_near=1e-3, min_width=0.04, max_width=0.50, verbose=False)
 
         d, _, _ = dist_n_t(q, prm.obs)
         qc = q - prm.obs.c; r = np.linalg.norm(qc)
@@ -965,7 +1231,7 @@ class TiltedSineMagnetic(RoundMagneticLaw):
         phi = self._phi_r(r)
 
         a1 = A # Sine lobe on the annulus
-        base = PowerMagnetic.b_scalar(q, prm)
+        base = self.base_law.b_scalar(q)
 
         field_main = base * (self.eps0 + a1*np.sin(th + phi)) * W
 
@@ -995,6 +1261,7 @@ class SineRPhaseMagnetic(RoundMagneticLaw):
     name = "sine_rphase"
 
     def __init__(self,
+                 prm: Params,
                  r1: Optional[float] = None,
                  r2: Optional[float] = None,
                  phi_max: float = np.pi/2,
@@ -1002,15 +1269,16 @@ class SineRPhaseMagnetic(RoundMagneticLaw):
                  use_tanh: bool = False,
                  k: float = 4.0,
                  sector_only: bool = True):
-        self.r1 = r1
-        self.r2 = r2
+
         self.phi_max = phi_max
         self.sigma_frac = sigma_frac
         self.use_tanh = use_tanh
         self.k = k
         self.sector_only = sector_only
-        # populated after calling auto_annulus(...) if r1/r2 are None:
-        self._annulus_ready = False
+        self._annulus_ready = (r1 is not None and r2 is not None)
+
+        super().__init__(prm, r1, r2)
+        self.base_law = PowerMagnetic(prm, self.r1, self.r2)
 
     # ---- annulus utils ----
     @staticmethod
@@ -1020,8 +1288,9 @@ class SineRPhaseMagnetic(RoundMagneticLaw):
         """
         return float(((1.0 - np.cos(theta)) * 0.5)**gamma)
 
-    def _phi_of_r(self, r: float, r1: float, r2: float) -> float:
-        rm = 0.5*(r1+r2)
+    def _phi_of_r(self, r: float) -> float:
+        r1 = self.r1; r2 = self.r2
+        rm = 0.5*(r1 + r2)
         s  = (r - rm) / max(0.5*(r2 - r1), 1e-9) # s \in [-1, 1]
         s  = float(np.clip(s, -1.0, 1.0))
         if self.use_tanh:
@@ -1029,23 +1298,20 @@ class SineRPhaseMagnetic(RoundMagneticLaw):
         return self.phi_max * s
 
     # ---- law ----
-    def b_scalar(self, q: np.ndarray, prm: Params) -> float:
+    def b_scalar(self, q: np.ndarray) -> float:
         # ensure annulus
         # d_on, q_far = 0.35, 2.0 # phi_window_far parameters
+        prm = self.prm
         if self.r1 is None or self.r2 is None:
-            self.auto_annulus(prm, tau_far=1e-2, tau_near=1e-2, min_width=0.04, max_width=0.50, verbose=False)
-        
-        r1 = self.r1
-        r2 = self.r2
+            self.auto_annulus(tau_far=1e-2, tau_near=1e-2, min_width=0.04, max_width=0.50, verbose=False)
             
-        d,_,_ = dist_n_t(q, prm.obs)
         qc = q - prm.obs.c; r = np.linalg.norm(qc)
         th = theta_rel_goal(q, prm.qg, prm.obs.c)
 
         w_ann = self._w_ann(th)
-        phi_r = self._phi_of_r(r, r1, r2)
+        phi_r = self._phi_of_r(r)
 
-        base = PowerMagnetic.b_scalar(q, prm)
+        base = self.base_law.b_scalar(q)
         return base * np.sin(th + phi_r) * w_ann
 
 # -------------------------
