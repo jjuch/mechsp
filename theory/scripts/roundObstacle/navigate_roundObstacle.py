@@ -1036,7 +1036,160 @@ class SignedPowerMagnetic(RoundMagneticLaw):
     """
     
     """
-    pass
+    name = "signedPower"
+
+    def __init__(self,
+                 prm: Params,
+                 r1: Optional[float] = None,
+                 r2: Optional[float] = None):
+        super().__init__(prm, r1, r2)
+        self.power_law = PowerMagnetic(self.prm, self.r1, self.r2)
+
+    def b_scalar(self, q):
+        prm = self.prm
+        th = theta_rel_goal(q, prm.qg, prm.obs.c)
+        sign = 1.0 if np.sin(th) >= 0 else -1.0
+
+        base = self.power_law.b_scalar(q)
+        return base * sign
+
+    
+    def _I_of_d(self, d2: float, npts: int = 2000) -> float:
+        """I(d2) = ∫_0^{d2} d^p * φ_far(d) dd (numerical)."""
+        prm = self.prm
+        if d2 <= 0: return 0.0
+        d_all = np.linspace(0.0, d2, npts)
+        f = [(d**prm.p) * phi_window_far(d, d_on=prm.d_far, q=prm.q_far) for d in d_all]
+        return float(np.trapz(f, d_all))
+    
+    def _find_r2_for_kB(self, vn: float, kB_fixed: float, d2_max:float = 1.5, tol: float = 1e-6) -> Optional[float]:
+        """
+        Minimal r2 (i.e., minimal d2 = r2 - prm.obs.r) such that (kB/m0/vn)*I(d2) >= π/2.
+        Returns r2 or None if infeasible within d2_max.
+        """
+        prm = self.prm
+        target = (prm.m0 * abs(vn)) * (0.5 * np.pi) / max(kB_fixed, 1e-12)
+        print("target= ", target)
+        # monotone bracket on I(d2)
+        lo, hi = 0.0, d2_max
+        Ilo = 0.0
+        Ihi = self._I_of_d(hi)
+        if Ihi < target:
+            # not achievable within search radius
+            return None
+        
+        # bisection
+        for _ in range(60):
+            mid = 0.5 * (lo + hi)
+            Imid = self._I_of_d(mid)
+            if Imid >= target: 
+                hi = mid
+            else:
+                lo = mid
+            if hi - lo < tol: break
+        d2_star = 0.5 * (lo + hi)
+        return float(prm.obs.r + d2_star)
+    
+    def _kB_for_r2(self, vn: float, r2: float) -> float:
+        """
+        Minimal kB so that Δψ_B^head>=π/2 at given r2 and vn (closed form).
+        """
+        prm = self.prm
+        d2 = max(0.0, float(r2 - prm.obs.r))
+        I = self._I_of_d(d2)
+        return float((prm.m0 * abs(vn)) * (0.5 * np.pi) / max(I, 1e-12))
+    
+    def design_headon_tradeoff(self,
+                               vn_list: Tuple[float, ...],
+                               kB_fixed: float,
+                               r2_fixed: float,
+                               simulate: bool = True,
+                               save_as: str | None = None):
+        """
+        Two-panel figure:
+          Left  : for given kB_fixed, plot r2*(vn) found by Δψ_B^head>=π/2 with r1=R,
+                  then overlay head-on trajectories started at q0 on those radii.
+          Right : for given r2_fixed, plot kB*(vn) = (m0*vn)*(π/2)/I(d2),
+                  then overlay head-on trajectories at those (kB*(vn), r2_fixed).
+
+        Notes:
+          * Uses this SignedPowerMagnetic law directly (no simulation for design).
+          * If a vn is infeasible for the given kB (within search bound), the point is skipped.
+        """
+        prm = self.prm
+        # ---- left: r2*(vn) for fixed kB ----
+        r2_star = []
+        for i, vn in enumerate(vn_list):
+            print(f"Fixed kB: {i + 1} / {len(vn_list)}")
+            r2_opt = self._find_r2_for_kB(vn, kB_fixed, d2_max=10)
+            r2_star.append(r2_opt)
+
+        print("r2_star = ", r2_star)
+
+        # ---- right: kB*(vn) for fixed r2 ----
+        kB_star = [self._kB_for_r2(vn, r2_fixed) for vn in vn_list]
+
+        # ---- Plots ----
+        ncols = 2
+        fig, axs = plt.subplots(1, ncols, figsize=(12.5, 5.6))
+
+        # Left subplot: r2*(vn)
+        ax = axs[0]
+        ax.add_patch(Circle(prm.obs.c, prm.obs.r, facecolor='none', edgecolor='k', lw=1.5))
+        ax.set_aspect('equal'); ax.grid(True, alpha=0.2)
+        ax.set_title(rf"Optimal $r_2$ vs $v_n$ (given $k_B={kB_fixed:.1f}$)")
+        ax.set_xlabel("x [m]"); ax.set_ylabel("y [m]")
+        # draw the found rings and (optional) trajectories
+        colors = plt.cm.viridis(np.linspace(0, 1, len(vn_list)))
+        for vn, r2o, col in zip(vn_list, r2_star, colors):
+            if r2o is None: continue
+            ax.add_patch(Circle(prm.obs.c, r2o, facecolor='none', edgecolor=col, lw=1.8, alpha=0.9))
+            # optionally simulate one short trajectory to visualize
+            if simulate:
+                print("start simulating")
+                # clone params with kB_fixed and alpha=0 (ground truth override if needed)
+                prm_loc = Params(**{**prm.__dict__, 'kB': kB_fixed})
+                sys = SecondOrderSystem(prm_loc, self)
+                q0 = prm.obs.c + r2o * ( (prm.qg - prm.obs.c) / np.linalg.norm(prm.qg - prm.obs.c) )
+                print(f"q0 = {q0}, & vn = {vn}\n\n",)
+                d, n, t = dist_n_t(q0, prm.obs)
+                v0 = -abs(vn) * n + 0.0 * t
+                _, Xs, _ = sys.simulate(q0, v0, h=0.01, tmax=40.0)
+                Q = Xs[:, :2]
+                ax.plot(Q[:,0], Q[:,1], '-', lw=2.0, color=col, alpha=0.85, label=f"{vn:.2f} m/s")
+                ax.plot(q0[0], q0[1], "ko", ms=3)
+        ax.plot(prm.qg[0], prm.qg[1], 'y*', ms=10, zorder=50)
+        ax.legend()
+
+  
+        # Right subplot: kB*(vn) at fixed r2
+        ax = axs[1]
+        ax.grid(True, alpha=0.2)
+        ax.set_title(rf"Optimal $k_B$ vs $v_n$ (given $r_2={r2_fixed:.3f}$ m)")
+        ax.set_xlabel(r"$v_n$ [m/s]"); ax.set_ylabel(r"$k_B^\star$ [-]")
+        ax.plot(vn_list, kB_star, 'o-', lw=2)
+        # (optional) trajectories at the computed kB*(vn)
+        if simulate:
+            prm_loc = Params(**prm.__dict__)
+            for vn, kBopt, col in zip(vn_list, kB_star, colors):
+                prm_loc.kB = float(kBopt)
+                sys = SecondOrderSystem(prm_loc, self)
+                q0 = prm.obs.c + r2_fixed * ( (prm.qg - prm.obs.c) / np.linalg.norm(prm.qg - prm.obs.c) )
+                d, n, t = dist_n_t(q0, prm.obs)
+                v0 = -abs(vn) * n + 0.0 * t
+                _, Xs, _ = sys.simulate(q0, v0, h=0.02, tmax=8.0)
+                # draw a small inset path near the axis as a polyline on the left axis for context
+                axs[0].plot(Xs[:,0], Xs[:,1], '-', lw=1.2, color=col, alpha=0.65)
+
+
+        plt.tight_layout()
+        if save_as: plt.savefig(save_as, dpi=180); plt.close(fig)
+        else:       plt.show()
+
+        return dict(r2_star=r2_star, kB_star=kB_star)
+
+
+
 
 class SineMagnetic(RoundMagneticLaw):
     """

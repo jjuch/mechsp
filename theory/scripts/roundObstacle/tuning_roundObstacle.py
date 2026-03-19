@@ -24,7 +24,7 @@ from matplotlib.patches import Circle
 from typing import List, Tuple
 from navigate_roundObstacle import (
     Params, Obstacle, SecondOrderSystem,
-    NoMagnetic, ConstMagnetic, PowerMagnetic, SineMagnetic, SineRPhaseMagnetic, TiltedSineMagnetic,
+    NoMagnetic, ConstMagnetic, PowerMagnetic, SineMagnetic, SineRPhaseMagnetic, TiltedSineMagnetic, SignedPowerMagnetic,
     dist_n_t, boundary_compliance, _initial_positions_aligned_with_goal
 )
 
@@ -205,15 +205,20 @@ def main():
     sys_const = SecondOrderSystem(prm, ConstMagnetic(prm))
     sys_dp    = SecondOrderSystem(prm, PowerMagnetic(prm))
     sys_sine  = SecondOrderSystem(prm, SineMagnetic(prm, d_sw=0.00, w_sw=0.00))
-    # Radially-phased sine: r1,r2 are computed automatically from the 'none' compliance profile.
+    sys_dpsigned = SecondOrderSystem(prm, SignedPowerMagnetic(prm))
     sys_sine_rphase = SecondOrderSystem(prm, SineRPhaseMagnetic(prm, phi_max=np.pi/2,
                                                                 sigma_frac=0.35,
                                                                 use_tanh=False,
                                                                 k=4.0,
                                                                 sector_only=True, r1=None, r2=None))
-    
-    # sys_sine.b_law.plot_curvature_maps(with_trajectories=True, n_traj=3,plot_radii=True)
-    # exit()
+    vn_list = (0.5, 1.0, 1.5) # head-on speeds
+    kB_fixed = prm.kB
+    r2_fixed = prm.obs.r + 0.5
+
+    law_signed = SignedPowerMagnetic(prm)
+    law_signed.design_headon_tradeoff(vn_list,
+                                      kB_fixed=kB_fixed, r2_fixed=r2_fixed, simulate=True)
+    exit()
     
     law = TiltedSineMagnetic(prm,
                             phi_max=np.pi/8, 
