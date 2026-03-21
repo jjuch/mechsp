@@ -1029,7 +1029,6 @@ class PowerMagnetic(RoundMagneticLaw):
         prm = self.prm
         d,_,_ = dist_n_t(q, prm.obs)
         cst = self.cst_law.b_scalar(q)
-        
         return cst * ((max(d,1e-6) + prm.eps_b)**prm.p)
 
 class SignedPowerMagnetic(RoundMagneticLaw):
@@ -1054,14 +1053,47 @@ class SignedPowerMagnetic(RoundMagneticLaw):
         return base * sign
 
     
+    def _phi_params_for_d2(self,
+                           d2: float,
+                           tau_far: float = 1e-3,
+                           policy: str = 'fix_q',
+                           q_min: float = 0.5,
+                           q_max: float = 6.0) -> tuple[float, float]:
+        """
+        Given a target cutoff distance d2, pick (d_on, q) so that phi_far(d2)=tau_far. (Alse see RoundMagneticLaw.auto_annulus.)
+
+        policy='fix_q':     keep q := prm.q_far, solve d_on(d2).
+        policy='fix_d_on':  keep d_on := prm.d_far, solve q(d2).
+        """
+        prm = self.prm
+        tau = max(tau_far, 1e-12)
+        if policy == 'fix_q':
+            q = float(prm.q_far)
+            d_on = float(d2) / ((-np.log(tau))**(1.0/max(q, 1e-6)))
+            d_on = max(d_on, 1e-9)
+            return d_on, q
+        elif policy == 'fix_d_on':
+            d_on = float(prm.d_far)
+            ratio = max(float(d2)/max(d_on, 1e-12), 1e-12)
+            q = np.log(1.0/tau) / max(np.log(ratio), 1e-12)
+            q = float(np.clip(q, q_min, q_max))
+            return d_on, q
+        else:
+            raise ValueError("policy must be 'fix_q' or 'fix_d_on'")
+
+
     def _I_of_d(self, d2: float, npts: int = 2000) -> float:
         """I(d2) = ∫_0^{d2} d^p * φ_far(d) dd (numerical)."""
         prm = self.prm
         if d2 <= 0: return 0.0
         d_all = np.linspace(0.0, d2, npts)
-        f = [(d**prm.p) * phi_window_far(d, d_on=prm.d_far, q=prm.q_far) for d in d_all]
+        d_far, q_far = self._phi_params_for_d2(
+            d2, tau_far = 1e-3, 
+            policy='fix_q')
+        f = [(d**prm.p) * phi_window_far(d, d_on=d_far, q=q_far) for d in d_all]
         return float(np.trapz(f, d_all))
     
+
     def _find_r2_for_kB(self, vn: float, kB_fixed: float, d2_max:float = 1.5, tol: float = 1e-6) -> Optional[float]:
         """
         Minimal r2 (i.e., minimal d2 = r2 - prm.obs.r) such that (kB/m0/vn)*I(d2) >= π/2.
@@ -1076,7 +1108,7 @@ class SignedPowerMagnetic(RoundMagneticLaw):
         Ihi = self._I_of_d(hi)
         if Ihi < target:
             # not achievable within search radius
-            return None
+            return float(prm.obs.r + hi) # should be none
         
         # bisection
         for _ in range(60):
@@ -1131,7 +1163,7 @@ class SignedPowerMagnetic(RoundMagneticLaw):
 
         # ---- Plots ----
         ncols = 2
-        fig, axs = plt.subplots(1, ncols, figsize=(12.5, 5.6))
+        fig, axs = plt.subplots(1, ncols, figsize=(12.5, 6.6))
 
         # Left subplot: r2*(vn)
         ax = axs[0]
@@ -1148,39 +1180,66 @@ class SignedPowerMagnetic(RoundMagneticLaw):
             if simulate:
                 print("start simulating")
                 # clone params with kB_fixed and alpha=0 (ground truth override if needed)
-                prm_loc = Params(**{**prm.__dict__, 'kB': kB_fixed})
-                sys = SecondOrderSystem(prm_loc, self)
-                q0 = prm.obs.c + r2o * ( (prm.qg - prm.obs.c) / np.linalg.norm(prm.qg - prm.obs.c) )
+                d2 = r2o - prm.obs.r
+                d_far, q_far = self._phi_params_for_d2(d2, tau_far=1e-3, policy='fix_q')
+                prm_loc = Params(**{**prm.__dict__, 'kB': kB_fixed, 'd_far': d_far, 'q_far': q_far})
+                law = SignedPowerMagnetic(prm_loc)
+                sys = SecondOrderSystem(prm_loc, law)
+                if vn == 2.5:
+                    law.plot_curvature_maps(n_traj=2, plot_radii=True)
+                q0 = prm.obs.c + r2o * ((prm.qg - (prm.obs.c + np.array([-0.9, 0.9]))) / np.linalg.norm(prm.qg - (prm.obs.c + np.array([-0.9, 0.9]))))
                 print(f"q0 = {q0}, & vn = {vn}\n\n",)
                 d, n, t = dist_n_t(q0, prm.obs)
                 v0 = -abs(vn) * n + 0.0 * t
-                _, Xs, _ = sys.simulate(q0, v0, h=0.01, tmax=40.0)
+                _, Xs, _ = sys.simulate(q0, v0, h=0.05, tmax=40.0)
                 Q = Xs[:, :2]
-                ax.plot(Q[:,0], Q[:,1], '-', lw=2.0, color=col, alpha=0.85, label=f"{vn:.2f} m/s")
+                ax.plot(Q[:,0], Q[:,1], '-', lw=2.0, color=col, alpha=0.85, label=f"Fixed Kb - {vn:.2f} m/s")
                 ax.plot(q0[0], q0[1], "ko", ms=3)
-        ax.plot(prm.qg[0], prm.qg[1], 'y*', ms=10, zorder=50)
-        ax.legend()
-
   
         # Right subplot: kB*(vn) at fixed r2
         ax = axs[1]
         ax.grid(True, alpha=0.2)
         ax.set_title(rf"Optimal $k_B$ vs $v_n$ (given $r_2={r2_fixed:.3f}$ m)")
         ax.set_xlabel(r"$v_n$ [m/s]"); ax.set_ylabel(r"$k_B^\star$ [-]")
-        ax.plot(vn_list, kB_star, 'o-', lw=2)
-        # (optional) trajectories at the computed kB*(vn)
-        if simulate:
-            prm_loc = Params(**prm.__dict__)
-            for vn, kBopt, col in zip(vn_list, kB_star, colors):
-                prm_loc.kB = float(kBopt)
-                sys = SecondOrderSystem(prm_loc, self)
-                q0 = prm.obs.c + r2_fixed * ( (prm.qg - prm.obs.c) / np.linalg.norm(prm.qg - prm.obs.c) )
+        kB_max = max(kB_star); kB_min = min(kB_star)
+        dkB = kB_max - kB_min
+        if dkB != 0.0:
+            ylim = [kB_min * 0.9, kB_max * 1.1]
+        else:
+            ylim = [kB_max * 0.9, kB_max * 1.1]
+
+        vn_max = max(vn_list); vn_min = min(vn_list)
+        dvn = vn_max - vn_min
+        if dvn != 0.0:
+            xlim = [vn_min * 0.9, vn_max * 1.1]
+        else:
+            xlim = [vn_max * 0.9, vn_max * 1.1]
+
+        for vn, kBopt, col in zip(vn_list, kB_star, colors):
+            ax.plot([vn, vn], [ylim[0], kBopt], ':k', alpha=0.6, linewidth=0.9)
+            ax.plot([xlim[0], vn], [kBopt, kBopt], ':k', alpha=0.6, linewidth=0.9)
+            ax.scatter(vn, kBopt, facecolor=col, s=50, marker='o')
+            ax.set_xlim(xlim)
+            ax.set_ylim(ylim)
+            
+            # (optional) trajectories at the computed kB*(vn)
+            if simulate:            
+                d2 = r2_fixed - prm.obs.r
+                d_far, q_far = self._phi_params_for_d2(d2, tau_far=1e-3, policy='fix_q')
+                prm_loc = Params(**{**prm.__dict__, 'kB': kBopt, 'd_far': d_far, 'q_far': q_far})
+                law = SignedPowerMagnetic(prm_loc)
+                sys = SecondOrderSystem(prm_loc, law)
+                q0 = prm.obs.c + r2_fixed * ( (prm.qg - (prm.obs.c - np.array([-1.2, 1.2]))) / np.linalg.norm(prm.qg - (prm.obs.c - np.array([-1.2, 1.2]))) )
                 d, n, t = dist_n_t(q0, prm.obs)
                 v0 = -abs(vn) * n + 0.0 * t
-                _, Xs, _ = sys.simulate(q0, v0, h=0.02, tmax=8.0)
+                _, Xs, _ = sys.simulate(q0, v0, h=0.05, tmax=40.0)
                 # draw a small inset path near the axis as a polyline on the left axis for context
-                axs[0].plot(Xs[:,0], Xs[:,1], '-', lw=1.2, color=col, alpha=0.65)
+                axs[0].plot(Xs[:,0], Xs[:,1], ':', lw=2, color=col, alpha=0.65, label=f"Fixed r2 - {vn:.2f} m/s")
+                
 
+        axs[0].plot(prm.qg[0], prm.qg[1], 'y*', ms=10, zorder=50)
+        if simulate:
+            axs[0].legend()
 
         plt.tight_layout()
         if save_as: plt.savefig(save_as, dpi=180); plt.close(fig)

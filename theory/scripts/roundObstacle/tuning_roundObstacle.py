@@ -217,7 +217,8 @@ def main():
 
     law_signed = SignedPowerMagnetic(prm)
     law_signed.design_headon_tradeoff(vn_list,
-                                      kB_fixed=kB_fixed, r2_fixed=r2_fixed, simulate=True)
+                                      kB_fixed=kB_fixed, r2_fixed=r2_fixed, simulate=True,
+                                     ) # save_as='figs/design_headon_tradeoff.png')
     exit()
     
     law = TiltedSineMagnetic(prm,
