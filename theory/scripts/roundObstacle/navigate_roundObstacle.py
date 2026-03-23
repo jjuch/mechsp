@@ -1081,40 +1081,120 @@ class SignedPowerMagnetic(RoundMagneticLaw):
         else:
             raise ValueError("policy must be 'fix_q' or 'fix_d_on'")
 
+    def measure_eta(self,
+                    vn: float,
+                    r2: float,
+                    tau_far: float = 1e-3,
+                    policy: str = 'fix_q',
+                    tmax: float = 40.0,
+                    h: float = 0.05,
+                    d_stop: float = 1e-4) -> float:
+        
+        """
+        Measure eta(vn, r2) = [ ∫ f(d(t)) dt ] / [ (1/vn) ∫_0^{d2} f(d) dd ]
+        using a single head-on run with NoMagnetic (gyro off).
 
-    def _I_of_d(self, d2: float, npts: int = 2000) -> float:
+        Args:
+            vn:    inward (head-on) launch speed at r=r2 (positive scalar).
+            r2:    outer ring radius (meters).
+            tau_far, policy: local far-field mapping s.t. phi_far(d2)=tau_far.
+            tmax, h: simulation horizon and time step for the NoMagnetic run.
+            d_stop: stop when distance to obstacle < d_stop (meters).
+
+        Returns:
+            eta >= 1.0 (float).
+        """
+        prm = self.prm
+        # local far-field pair matched to this d2 (for f(d) below)
+        d2 = max(0.0, float(r2 - prm.obs.r))
+        d_on_loc, q_loc = self._phi_params_for_d2(d2, tau_far=tau_far, policy=policy)
+  
+        # denominator: I(d2) = ∫_0^{d2} d^p * phi_far(d; d_on_loc, q_loc) dd
+        I_d2 = self._I_of_d(d2, tau_far=tau_far, policy=policy)
+
+        # build a NoMagnetic system (same damping, goal)
+        prm_nomag = Params(**{**prm.__dict__, 'd_far': d_on_loc, 'q_far': q_loc})
+        sys_nomag = SecondOrderSystem(prm_nomag, NoMagnetic(prm_nomag))
+
+        # head-on initial condition on goal axis (θ=0)
+        q0 = prm.obs.c + r2 * ((prm.qg - prm.obs.c) / np.linalg.norm(prm.qg - prm.obs.c))
+        d, n, tvec = dist_n_t(q0, prm.obs)
+        v0 = -abs(vn) * n   # inward, purely normal
+
+        # simulate and accumulate N = ∫ f(d(t)) dt over inward segment
+        x = np.hstack([q0, v0])
+        N_time = 0.0
+        tcur = 0.0
+
+        for _ in range(int(tmax / h)):
+            q = x[:2]
+            d, _, _ = dist_n_t(q, prm.obs)
+            if d <= d_stop:         # reached near the boundary
+                break
+            # accumulate time integral of f(d(t))
+            phi = phi_window_far(d, d_on=d_on_loc, q=q_loc)
+            fdt = (max(d, 0.0)**prm.p) * phi
+            N_time += fdt * h
+
+            # advance one RK4 step with NoMagnetic
+            x = sys_nomag.rk4(x, h)
+            tcur += h
+
+            # if it ever turns around (rare for NoMagnetic on axis), stop
+            # i.e., if radial distance increases while heading inward
+            q_next = x[:2]; d_next, _, _ = dist_n_t(q_next, prm.obs)
+            if d_next > d + 1e-9:  # started to move outward
+                break
+
+        # eta = (v_n * ∫ f(d(t)) dt) / I(d2)
+        eta = float((abs(vn) * N_time) / max(I_d2, 1e-12))
+        return max(1.0, eta)
+
+
+
+    def _I_of_d(self, d2: float, npts: int = 2000, tau_far: float=1e-3, policy='fix_q') -> float:
         """I(d2) = ∫_0^{d2} d^p * φ_far(d) dd (numerical)."""
         prm = self.prm
         if d2 <= 0: return 0.0
         d_all = np.linspace(0.0, d2, npts)
         d_far, q_far = self._phi_params_for_d2(
-            d2, tau_far = 1e-3, 
-            policy='fix_q')
+            d2, tau_far = tau_far, 
+            policy=policy)
         f = [(d**prm.p) * phi_window_far(d, d_on=d_far, q=q_far) for d in d_all]
         return float(np.trapz(f, d_all))
     
 
-    def _find_r2_for_kB(self, vn: float, kB_fixed: float, d2_max:float = 1.5, tol: float = 1e-6) -> Optional[float]:
+    def _find_r2_for_kB(self, vn: float, kB_fixed: float, d2_max:float = 1.5, tol: float = 1e-6, tau_far: float = 1e-3, eta_fixed: float | None = None) -> Optional[float]:
         """
-        Minimal r2 (i.e., minimal d2 = r2 - prm.obs.r) such that (kB/m0/vn)*I(d2) >= π/2.
+        Minimal r2 (i.e., minimal d2 = r2 - prm.obs.r) such that (kB/m0/vn)*I(d2) >= 1/eta.
+
         Returns r2 or None if infeasible within d2_max.
         """
         prm = self.prm
-        target = (prm.m0 * abs(vn)) * (0.5 * np.pi) / max(kB_fixed, 1e-12)
-        print("target= ", target)
         # monotone bracket on I(d2)
         lo, hi = 0.0, d2_max
+        # quick infeasibility check at hi
+        if eta_fixed is None:
+            eta_hi = self.measure_eta(vn, prm.obs.r + hi, tau_far=tau_far, 
+            policy='fix_q')
+        else:
+            eta_hi = eta_fixed
         Ilo = 0.0
-        Ihi = self._I_of_d(hi)
-        if Ihi < target:
-            # not achievable within search radius
-            return float(prm.obs.r + hi) # should be none
+        Ihi = self._I_of_d(hi, tau_far=tau_far)
+        if (kB_fixed / (prm.m0 * abs(vn))) * eta_hi * Ihi < 1.0:
+            return None
         
         # bisection
         for _ in range(60):
             mid = 0.5 * (lo + hi)
-            Imid = self._I_of_d(mid)
-            if Imid >= target: 
+            r2_mid = prm.obs.r + mid
+            if eta_fixed is None:
+                eta_mid = self.measure_eta(vn, r2_mid, tau_far=tau_far)
+            else:
+                eta_mid = eta_fixed
+            Imid = self._I_of_d(mid, tau_far=tau_far)
+            lhs = (kB_fixed / (prm.m0 * abs(vn))) * eta_mid * Imid
+            if lhs >= 1.0: 
                 hi = mid
             else:
                 lo = mid
@@ -1122,14 +1202,18 @@ class SignedPowerMagnetic(RoundMagneticLaw):
         d2_star = 0.5 * (lo + hi)
         return float(prm.obs.r + d2_star)
     
-    def _kB_for_r2(self, vn: float, r2: float) -> float:
+    def _kB_for_r2(self, vn: float, r2: float, tau_far: float = 1e-3, eta_fixed: float | None = None) -> float:
         """
-        Minimal kB so that Δψ_B^head>=π/2 at given r2 and vn (closed form).
+        Minimal kB so that Δψ_B^head>=1/eta at given r2 and vn (closed form).
         """
         prm = self.prm
         d2 = max(0.0, float(r2 - prm.obs.r))
-        I = self._I_of_d(d2)
-        return float((prm.m0 * abs(vn)) * (0.5 * np.pi) / max(I, 1e-12))
+        I = self._I_of_d(d2, tau_far=tau_far)
+        if eta_fixed is None:
+            eta = self.measure_eta(vn, r2, tau_far=tau_far)
+        else:
+            eta = eta_fixed
+        return float((prm.m0 * abs(vn)) / (eta*max(I, 1e-12)))
     
     def design_headon_tradeoff(self,
                                vn_list: Tuple[float, ...],
