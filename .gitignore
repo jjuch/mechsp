@@ -208,3 +208,6 @@ __marimo__/
 
 # general data storage
 .cache*
+
+# ELMER
+/out
