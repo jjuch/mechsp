@@ -38,7 +38,8 @@ We work on $\mathcal{Q}\subset\mathbb{R}^2$ with
 $$
 \begin{align}
 &\mathcal{L}(q,\dot{q})=\tfrac12\,\dot q^\top M(q)\dot q + A(q)\cdot\dot q - \psi(q),\\ 
-&B=dA,\\ &B(q)^\top=-B(q),
+&B=dA,\\ 
+&B(q)^\top=-B(q),
 \end{align}
 $$
 
@@ -57,7 +58,13 @@ $$
 \end{align}
 $$
 
-and $N(q) = \begin{bmatrix} 0 & -B(q)\\ B(q) & 0\end{bmatrix}$.
+and 
+
+$$
+N(q) = \begin{bmatrix} 0 & -B(q) \\ 
+B(q) & 0\end{bmatrix}.
+$$
+
 Define energy $\mathcal{H}(q,\dot q)=\tfrac12\dot q^\top M(q)\dot q+\psi(q)$. Using the Levi–Civita identity and $B^\top=-B$, we get the **exact** balance
 
 $$
@@ -74,7 +81,9 @@ For a disk obstacle with center $c$ and radius $r$, write
 
 $$
 \begin{cases}
-d(q)=\|q-c\|-r,\\ n(q)=\frac{q-c}{\|q-c\|},\\ t(q)=J n(q),
+d(q)=\|q-c\|-r,\\ 
+n(q)=\frac{q-c}{\|q-c\|},\\ 
+t(q)=J n(q),
 \end{cases}
 $$
 
@@ -130,7 +139,7 @@ $$
 
 **Implications** (visible in the curvature maps):
 - **Scaling:** Curvature grows with $b(q)$ and decays with speed. At fixed grazing speed $v_t$, $\kappa_{s,B}=b/(m_0 v_t)$.
-- **Sign:** $\operatorname{sign}(\kappa_{s,B})=\operatorname{sign}(b)$; laws that modulate the sign steer the bend direction.
+- **Sign:** $\text{sign}(\kappa_{s,B})=\text{sign}(b)$; laws that modulate the sign steer the bend direction.
 
 When $\alpha>0$, $M(q)$ is no longer scalar. The code still builds curvature from **components** $a=a_B+a_{\rm geom}+a_{\rm goal}-c_{\rm damp}v$ via $(v\times a)/\|v\|^3$, rendering total, magnetic (B), geometric, and goal panels. See `plot_curvature_maps(...)`.
 
@@ -182,7 +191,7 @@ Below, “laws” refer to classes in `navigate_roundObstacle.py`. Symbols $\phi
 - **Cons:** still no angular selectivity.
 
 #### 4.3 `SignedPowerMagnetic` — head‑on analytic tool<a name="sgn-magn"></a>
-- **Law:** $b(q)=k_B (d+\varepsilon_b)^p \phi_{\rm far}(d) \operatorname{sign}(\sin\theta)$ with $\theta=\theta_{\rm rel\,goal}(q,q_g,c)$.
+- **Law:** $b(q)=k_B (d+\varepsilon_b)^p \phi_{\rm far}(d) \text{sign}(\sin\theta)$ with $\theta=\theta_{\rm rel\,goal}(q,q_g,c)$.
 - **When:** design for **head‑on** worst case; sign stays consistent along the approach.
 - **Pros:** enables **closed‑form** trade‑offs (`I(d_2)`) and **measured** $\eta$; perfect for minimal $r_2$ or minimal $k_B$ vs $v_n$.
 - **Cons:** coarse angular control; good for certification, less for aesthetics.
@@ -228,8 +237,8 @@ with $\phi(r)$ sweeping from $-\phi_{\max}$ at $r_1$ to $+\phi_{\max}$ at $r_2$ 
 ### 6. Diagnostics: What to Tune with What<a name="diagnostics"></a>
 
 - **Curvature maps** (`plot_curvature_maps`) — 4 panels (total, B, geometric, goal). Use them to ensure the **B‑panel** dominates in the hard semicircle and to see phase alignment across the annulus.
-- **Grazing normal maps** (`plot_grazing_normal_maps`) — check $\langle n\cdot a\rangle\ge0$ ring‑wise on the **goal‑opposing** semicircle. Fine‑tune `W(θ)`, $\varepsilon_0$, and knee‑cap strength/width to close corridors. citeturn70search2
-- **Head‑on design** (`SignedPowerMagnetic.design_headon_tradeoff`) — compute minimal $r_2^*(v_n)$ for fixed $k_B$ and minimal $k_B^*(v_n)$ for fixed $r_2$ using measured $\eta$. Overlay validation trajectories.
+- **Grazing normal maps** (`plot_grazing_normal_maps`) — check $\langle n\cdot a\rangle\ge0$ ring‑wise on the **goal‑opposing** semicircle. Fine‑tune `W(θ)`, $\varepsilon_0$, and knee‑cap strength/width to close corridors.
+- **Head‑on design** (`SignedPowerMagnetic.design_headon_tradeoff`) — compute minimal $r_2^{f}(v_n)$ for fixed $k_B$ and minimal $k_B^{f}(v_n)$ for fixed $r_2$ using measured $\eta$. Overlay validation trajectories.
 - **APF potential & minima** (`plot_potential_and_minima`) — verify the repulsive wall budget and visualize candidate traps for APF.
 
 ---
@@ -245,7 +254,7 @@ with $\phi(r)$ sweeping from $-\phi_{\max}$ at $r_1$ to $+\phi_{\max}$ at $r_2$ 
    - `figs/grazing_na_<law>.png` — grazing normal panels (total, B, geometric, goal). citeturn70search2
 
 3) **Head‑on design**
-   - `figs/design_headon_tradeoff.png` — $r_2^*(v_n)$ (fixed $k_B$) and $k_B^*(v_n)$ (fixed $r_2$) with optional overlays. citeturn70search2
+   - `figs/design_headon_tradeoff.png` — $r_2^{f}(v_n)$ (fixed $k_B$) and $k_B^{f}(v_n)$ (fixed $r_2$) with optional overlays.
 
 4) **Playful viz (optional, but popular)**
    - `figs/avoidance_side_by_side_multi.gif` — multi‑IC GIF with common time axis; APF background = $U_{\rm rep}$; Gyro background = signed curvature (black at zero); vortex strictly **inside** the obstacle. citeturn70search2
